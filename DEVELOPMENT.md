@@ -4,7 +4,8 @@
 
 **Phases Completed**: 1-6 of 8 ✅
 **Progress**: Phase 6 complete - Settings & Preferences implemented
-**Next Up**: Fix critical lockup bug, then Phase 7 - Error Handling & Edge Cases
+**Next Up**: Fix critical EXC_BAD_ACCESS crash bug (blocking all usage), then Phase 7 - Error Handling & Edge Cases
+**Current Blocker**: 🔴 **CRITICAL BUG** - Second recording crashes with EXC_BAD_ACCESS in autorelease pool
 
 ### Quick Summary for Fresh Context
 
@@ -16,10 +17,12 @@
 - ✅ Text insertion via Accessibility API (direct method works in most apps)
 
 **What's Broken**:
-- 🔴 **CRITICAL**: Second/subsequent recordings lock up the app completely - requires force quit
+- 🔴 **CRITICAL**: Second recording crashes with EXC_BAD_ACCESS in autorelease pool (see detailed investigation below)
+- ⚠️ Permissions flow broken - not requesting microphone/speech recognition properly, only accessibility
 - ⚠️ Filler word removal not working
 - ⚠️ Automatic punctuation not working
 - ⚠️ Settings "Change Hotkey" button doesn't capture keys (use Debug menu instead)
+- ⚠️ Debug key logging not showing in console
 
 **Last Test Session** (2025-11-06):
 1. Restarted app after permission ordering fix - Fn key worked
@@ -27,28 +30,71 @@
 3. Second recording attempt: locked up completely, overlay stuck, had to force quit
 4. Confirmed lockup happens on every second recording attempt
 
-### Immediate Priority: Fix Critical Lockup Bug 🔴
+### 🔴 CRITICAL BUG: Second Recording Crashes with EXC_BAD_ACCESS
 
-**Problem**: App locks up completely on second/subsequent recordings. First recording works fine, but any attempt after that freezes the app with overlay stuck visible. Only recovery is force quit.
+**Symptom**: First recording works perfectly. Second recording starts setup ("Recognition started successfully"), then immediately crashes with EXC_BAD_ACCESS in autorelease pool.
 
-**Suspected Causes**:
-- Audio engine not properly stopping/cleaning up between recordings
-- Recognition task not being cancelled/released properly
-- Resources (tap on audio bus) not being removed
-- Possible race condition in start/stop logic
+**Crash Pattern**:
+```
+* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=1, address=0x...)
+  * frame #0: libobjc.A.dylib`objc_release + 16
+    frame #1: libobjc.A.dylib`AutoreleasePoolPage::releaseUntil(objc_object**) + 204
+    frame #2: libobjc.A.dylib`objc_autoreleasePoolPop + 244
+    frame #3: CoreFoundation`_CFAutoreleasePoolPop + 32
+    frame #4: Foundation`-[NSAutoreleasePool drain] + 136
+    frame #5: AppKit`-[NSApplication run] + 416
+```
 
-**Needed Fixes** (in priority order):
-1. **Escape key to cancel recording** - Add immediate emergency exit
-2. **Force stop mechanism** - Make "Stop Dictation" menu work even when stuck
-3. **Audio engine cleanup** - Ensure `removeTap(onBus: 0)` always called, engine properly stopped
-4. **Recognition task lifecycle** - Verify task is cancelled and released between sessions
-5. **Shorter timeout** - Reduce from 60s to 10-15s
-6. **Better error handling** - Detect when no audio flowing, fail fast
+**Console Pattern** (first recording completes, second crashes):
+```
+[First Recording]
+Recognition started successfully
+Recording stopped
+Recognition task completed (final: false, error: true)  ← Fires AFTER cleanup
 
-**Files to Check**:
-- `LocalDictation/Core/SpeechRecognitionManager.swift` - stopRecognition(), startRecognition()
-- `LocalDictation/Core/AudioEngineManager.swift` - stopEngine(), startEngine()
-- `LocalDictation/AppDelegate.swift` - stopRecording(), startRecording() sequencing
+[Second Recording - Initial behavior]
+Recognition started successfully  ← CRASHED HERE (attempts 1-7)
+
+[Second Recording - After autoreleasepool changes (attempt 8)]
+[HotkeyManager] Hotkey pressed (keyCode: 63)
+← CRASHES HERE NOW (before overlay, before any recording setup)
+```
+
+**Key Observations**:
+1. The first recording's completion handler fires **AFTER** stopRecognition() completes, suggesting async autoreleased objects linger
+2. After autoreleasepool changes (attempt 8), crash moved EARLIER - now crashes immediately on hotkey press for second recording, before even reaching AppDelegate's hotkey handler or showing UI
+3. This suggests the autorelease corruption is so severe that even accessing manager objects (speechManager, audioManager) in the hotkey callback triggers the crash
+
+**Attempted Fixes** (all failed):
+1. ✗ Removed `testRecognition()`, switched to `startRecognition()` - still crashed
+2. ✗ Added `audioEngine.reset()` after stopping - still crashed
+3. ✗ Moved `audioEngine.reset()` to before starting - still crashed
+4. ✗ Removed redundant `removeTap()` call from start - still crashed
+5. ✗ Added completion handler guards for cancelled tasks - still crashed
+6. ✗ Wrapped cleanup in `autoreleasepool { }` - still crashed
+7. ✗ Wrapped start sequence in `autoreleasepool { }` - MADE IT WORSE (crash moved earlier)
+8. ✗ Combined: aggressive autoreleasepool boundaries everywhere - MADE IT WORSE (now crashes on hotkey press before any setup)
+
+**Current Theory**:
+The autorelease pool from the first recording's completion handler contains corrupted objects (likely AVAudioEngine or SFSpeechRecognizer internals). Initially crashed after "Recognition started successfully" during pool drain. After adding autoreleasepool boundaries, crash moved EARLIER to immediately on hotkey press, suggesting the corruption is so deep that even accessing the manager objects triggers it. The autoreleasepool changes may have accelerated when the corrupted objects get released, but didn't fix the underlying corruption.
+
+**Latest Code State** (LocalDictation/Core/SpeechRecognitionManager.swift):
+- Cleanup wrapped in `autoreleasepool { }` with forced double-drain
+- Start sequence wrapped in `autoreleasepool { }` for clean boundaries
+- Removed `reset()` calls entirely
+- Added explicit cancel + nil old objects before creating new ones
+- All operations synchronous on main thread (no background dispatch)
+
+**Next Steps to Try**:
+1. **Add delay between recordings** - Test if waiting 1-2 seconds allows autorelease pool to naturally drain
+2. **Don't reuse AVAudioEngine** - Create fresh engine for each recording (expensive but may work)
+3. **Investigate AVAudioEngine internals** - Check Apple forums/docs for known reuse issues
+4. **Try older AVAudioEngine patterns** - Look for deprecated but more stable APIs
+5. **Consider alternative frameworks** - Evaluate if Audio Toolbox or lower-level APIs avoid this issue
+
+**Files Involved**:
+- `LocalDictation/Core/SpeechRecognitionManager.swift` (lines 138-313)
+- `LocalDictation/AppDelegate.swift` (startRecording/stopRecording methods)
 
 ### What's Working
 - ✅ Project structure and XcodeGen configuration
@@ -136,30 +182,53 @@
   - TextInsertionManager respects insertion method preference
   - Settings persist via UserDefaults automatically
 
-### Known Bugs (To Be Fixed)
-
-**Critical (Blocks Usage)**:
-- 🔴 **App completely locks up on second/subsequent recordings**: After first successful recording, subsequent attempts freeze the app with UI stuck visible. Only way to recover is force quit. Happens consistently, especially when recording in Terminal or with no/low audio input. Audio engine may not be properly cleaning up between recordings.
-  - First recording works fine, detects "No speech detected" and recovers gracefully
-  - Second recording starts but never completes or times out
-  - Overlay remains visible, app unresponsive
-  - "Stop Dictation" menu item doesn't work when stuck
-  - Needs: Escape key to cancel, force stop mechanism, better audio engine cleanup
+### Other Known Bugs (Non-Blocking)
 
 **High Priority**:
+- ⚠️ **Permissions flow broken** (2025-11-06): App no longer requests microphone/speech recognition permissions properly. Only shows accessibility dialog. Permissions get granted eventually but flow is messy with multiple dialogs.
+  - Console shows "Microphone permission status: Not Determined" repeatedly
+  - No permission request dialog appears for mic/speech
+  - Eventually permissions get authorized but unclear how
+  - Needs: Review permission request flow in PermissionsManager
 - ⚠️ **Filler word removal not working**: TranscriptionProcessor is implemented but filler words are not being removed from transcriptions
 - ⚠️ **Automatic punctuation not working**: `addsPunctuation = true` is set but punctuation is not appearing in transcriptions
 
 **Medium Priority**:
+- ⚠️ **Debug key logging not showing** (2025-11-06): "Debug: Log All Keys" menu item doesn't output to console. Unclear if monitoring is working or just logging broken.
 - ⚠️ **Change hotkey button doesn't recognize key presses**: In Settings > Hotkey tab, clicking "Change Hotkey" shows waiting state but doesn't capture key presses (workaround: use Debug menu "Change Hotkey KeyCode...")
 - ⚠️ **Terminal text insertion compatibility**: Terminal likely doesn't support accessibility text insertion properly, may cause audio/recognition issues
 
+**Low Priority**:
+- ⚠️ **Escape key emergency cancel added but needs testing** (2025-11-06): Added Escape key monitor to force-stop stuck recordings, but hasn't been tested since crash happens before user can press Escape
+
 ### Recent Changes
+
+- **2025-11-06 (EXC_BAD_ACCESS Investigation)**: Critical Crash Bug - 8 Failed Fix Attempts
+  - **Problem**: Second recording crashes with EXC_BAD_ACCESS in autorelease pool immediately after "Recognition started successfully"
+  - **Investigation approach**: Iterative debugging with 8 distinct fix attempts, testing each with full app restart
+  - **Fix attempts** (all failed):
+    1. Changed from `testRecognition()` to `startRecognition()` directly
+    2. Added `audioEngine.reset()` to cleanup sequence
+    3. Moved `reset()` from cleanup to start (before new recording)
+    4. Removed redundant `removeTap()` call from start
+    5. Added completion handler guards to ignore cancelled tasks
+    6. Wrapped cleanup in `autoreleasepool { }` with double-drain
+    7. Wrapped start sequence in `autoreleasepool { }`
+    8. Removed all threading complexity, made everything synchronous on main thread
+  - **Key discovery**: Completion handler from first recording fires AFTER stopRecognition() completes, suggesting async autorelease objects linger and corrupt second recording
+  - **Latest code state**: Aggressive autoreleasepool boundaries + explicit object cleanup + main-thread-only execution
+  - **Status**: Still crashing. Needs fundamentally different approach (delay, fresh engine, or alternative framework)
+  - **Other bugs discovered**:
+    - Permissions flow broken (mic/speech not requested properly)
+    - Debug key logging not outputting to console
+    - Escape key monitor added but untested due to crash
+  - **User feedback**: "please ultrathink this through before I start it up again" - need better pre-testing strategy
+
 - **2025-11-06 (Phase 6 Post-Implementation)**: Bug Fixes & Testing
   - **Fixed hotkey monitoring not starting**: Reordered `applicationDidFinishLaunching` to check permissions BEFORE setting up managers. Hotkey monitoring was failing because `accessibilityPermissionStatus` was uninitialized when `setupManagers()` checked it.
   - **Confirmed working**: Settings window opens from menu bar, all 5 tabs accessible
   - **Confirmed working**: First recording works correctly, detects "No speech detected", overlay dismisses properly, text insertion succeeds
-  - **Discovered critical bug**: App locks up on second/subsequent recordings. Audio engine or recognition task not cleaning up properly between sessions. Requires force quit to recover.
+  - **Discovered critical bug**: Second recording crashes with EXC_BAD_ACCESS - began extensive investigation (see above)
   - **Testing notes**:
     - Direct text insertion works in most apps
     - Terminal may have audio/accessibility compatibility issues

@@ -29,6 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var isRecording = false
     var transcriptionObserver: AnyCancellable?
     var settingsWindow: NSWindow?
+    var escapeKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create status item in menu bar
@@ -215,16 +216,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear previous transcription
         speechManager.transcriptionText = ""
 
-        // Start recognition
-        speechManager.testRecognition(duration: 60.0) // 60 seconds max
+        // Start recognition (must be on main thread for AVAudioEngine)
+        do {
+            try speechManager.startRecognition()
+            print("[AppDelegate] Recording started")
 
-        print("[AppDelegate] Recording started")
+            // Install Escape key monitor for emergency cancel
+            escapeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53 { // Escape key
+                    print("[AppDelegate] Escape key pressed - emergency stop")
+                    self?.stopRecording()
+                    return nil // Consume the event
+                }
+                return event
+            }
+        } catch {
+            // Recognition failed to start
+            print("[AppDelegate] Failed to start recognition: \(error)")
+            updateMenuStatus("Recognition failed")
+            updateMenuBarIcon(for: .error)
+
+            // Reset state
+            isRecording = false
+            if settings.showOverlay {
+                overlayController.hide()
+            }
+            if let menuItem = menu.item(withTitle: "Stop Dictation") {
+                menuItem.title = "Start Dictation"
+            }
+        }
     }
 
     private func stopRecording() {
         guard isRecording else { return }
 
         isRecording = false
+
+        // Remove Escape key monitor
+        if let monitor = escapeKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            escapeKeyMonitor = nil
+            print("[AppDelegate] Escape key monitor removed")
+        }
+
         updateMenuBarIcon(for: .idle)
         updateMenuStatus("Processing...")
 
