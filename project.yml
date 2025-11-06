@@ -1,0 +1,66 @@
+name: LocalDictation
+options:
+  bundleIdPrefix: com.yourname
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    PRODUCT_NAME: LocalDictation
+    PRODUCT_BUNDLE_IDENTIFIER: com.yourname.LocalDictation
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_APP_SANDBOX: NO  # Temporarily disabled for Accessibility API
+
+targets:
+  LocalDictation:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - LocalDictation
+    settings:
+      base:
+        INFOPLIST_FILE: LocalDictation/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.LocalDictation
+        PRODUCT_NAME: LocalDictation
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: 1.0
+        SWIFT_EMIT_LOC_STRINGS: YES
+        SWIFT_VERSION: 5.9
+        ENABLE_PREVIEWS: YES
+        CODE_SIGN_ENTITLEMENTS: LocalDictation/LocalDictation.entitlements
+
+    info:
+      path: LocalDictation/Info.plist
+      properties:
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: $(PRODUCT_BUNDLE_PACKAGE_TYPE)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSMicrophoneUsageDescription: LocalDictation needs microphone access to transcribe your speech
+        NSSpeechRecognitionUsageDescription: LocalDictation needs speech recognition to convert your voice to text
+
+  LocalDictationTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - LocalDictationTests
+    dependencies:
+      - target: LocalDictation
+    settings:
+      base:
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/LocalDictation.app/Contents/MacOS/LocalDictation
