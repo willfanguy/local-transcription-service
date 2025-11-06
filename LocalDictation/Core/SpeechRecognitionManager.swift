@@ -78,6 +78,26 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         print("Audio engine set for speech recognition")
     }
 
+    /// Set the recognition language
+    func setLanguage(_ languageCode: String) {
+        // Stop any active recognition
+        stopRecognition()
+
+        // Create new recognizer with the specified language
+        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: languageCode))
+        speechRecognizer?.delegate = self
+
+        // Log new configuration
+        if let recognizer = speechRecognizer {
+            print("=== Speech Recognizer Language Changed ===")
+            print("New locale: \(recognizer.locale)")
+            print("Available: \(recognizer.isAvailable)")
+            print("Supports on-device recognition: \(recognizer.supportsOnDeviceRecognition)")
+        } else {
+            print("ERROR: Failed to create speech recognizer for language: \(languageCode)")
+        }
+    }
+
     /// Start speech recognition
     func startRecognition() throws {
         print("Starting speech recognition...")

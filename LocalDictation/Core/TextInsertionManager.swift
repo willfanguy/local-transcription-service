@@ -75,13 +75,40 @@ class TextInsertionManager {
 
     // MARK: - Text Insertion Methods
 
-    /// Attempts direct text insertion via Accessibility API
+    /// Public method for direct text insertion (finds focused element automatically)
+    /// - Parameter text: The text to insert
+    /// - Throws: TextInsertionError if insertion fails
+    func insertTextDirect(_ text: String) throws {
+        print("[TextInsertionManager] Attempting direct insertion: \"\(text)\"")
+
+        // Check accessibility permission
+        guard AXIsProcessTrusted() else {
+            print("[TextInsertionManager] ❌ Accessibility permission not granted")
+            throw TextInsertionError.accessibilityPermissionDenied
+        }
+
+        // Get focused element
+        guard let focusedElement = getFocusedElement() else {
+            print("[TextInsertionManager] ❌ No focused element found")
+            throw TextInsertionError.noFocusedElement
+        }
+
+        // Attempt direct insertion
+        if !insertTextDirect(text, to: focusedElement) {
+            print("[TextInsertionManager] ❌ Direct insertion failed")
+            throw TextInsertionError.insertionFailed
+        }
+
+        print("[TextInsertionManager] ✅ Direct insertion succeeded")
+    }
+
+    /// Attempts direct text insertion via Accessibility API (internal)
     /// - Parameters:
     ///   - text: The text to insert
     ///   - element: The target UI element
     /// - Returns: True if insertion succeeded
-    func insertTextDirect(_ text: String, to element: AXUIElement) -> Bool {
-        print("[TextInsertionManager] Attempting direct insertion: \"\(text)\"")
+    private func insertTextDirect(_ text: String, to element: AXUIElement) -> Bool {
+        print("[TextInsertionManager] Attempting direct insertion to element")
 
         // Try to set the value directly
         let result = AXUIElementSetAttributeValue(
@@ -91,10 +118,10 @@ class TextInsertionManager {
         )
 
         if result == .success {
-            print("[TextInsertionManager] ✅ Direct insertion succeeded")
+            print("[TextInsertionManager] ✅ Direct insertion to element succeeded")
             return true
         } else {
-            print("[TextInsertionManager] ❌ Direct insertion failed: \(result.rawValue)")
+            print("[TextInsertionManager] ❌ Direct insertion to element failed: \(result.rawValue)")
             return false
         }
     }

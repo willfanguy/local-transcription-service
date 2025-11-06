@@ -209,10 +209,3 @@ class HotkeyManager: ObservableObject {
         recordingMode = mode
     }
 }
-
-// MARK: - Supporting Types
-
-enum RecordingMode: String, CaseIterable {
-    case hold = "Hold to Record"
-    case toggle = "Toggle Recording"
-}

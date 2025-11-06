@@ -13,6 +13,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var menu: NSMenu!
 
+    // Settings
+    let settings = AppSettings.shared
+
     // Managers
     let permissionsManager = PermissionsManager.shared
     let speechManager = SpeechRecognitionManager()
@@ -25,6 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // State
     var isRecording = false
     var transcriptionObserver: AnyCancellable?
+    var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create status item in menu bar
@@ -39,11 +43,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create menu
         setupMenu()
 
-        // Setup managers
-        setupManagers()
-
-        // Check permissions on launch
+        // Check permissions on launch (BEFORE setting up managers)
         permissionsManager.checkAllPermissions()
+
+        // Setup managers (needs permissions to be checked first)
+        setupManagers()
 
         // Log detailed status
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -104,21 +108,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Connect audio engine to speech manager
         speechManager.setAudioEngine(audioManager.engine)
 
+        // Configure speech recognizer with user's language preference
+        speechManager.setLanguage(settings.recognitionLanguage)
+
+        // Configure hotkey manager with user's settings
+        hotkeyManager.hotkeyKeyCode = settings.hotkeyKeyCode
+        hotkeyManager.recordingMode = settings.recordingMode
+
         // Observe transcription changes and update overlay
         transcriptionObserver = speechManager.$transcriptionText
             .sink { [weak self] text in
-                self?.overlayController.updateText(text)
+                guard let self = self else { return }
+                if self.settings.showOverlay {
+                    self.overlayController.updateText(text)
+                }
             }
 
-        // Setup hotkey callbacks
+        // Setup hotkey callbacks based on recording mode
         hotkeyManager.onHotkeyPressed = { [weak self] in
-            print("[AppDelegate] Fn key pressed - starting dictation")
-            self?.startRecording()
+            guard let self = self else { return }
+            print("[AppDelegate] Hotkey pressed")
+
+            switch self.settings.recordingMode {
+            case .hold:
+                // Hold to record: start on press
+                self.startRecording()
+            case .toggle:
+                // Toggle mode: start or stop on press
+                self.toggleDictation()
+            }
         }
 
         hotkeyManager.onHotkeyReleased = { [weak self] in
-            print("[AppDelegate] Fn key released - stopping dictation")
-            self?.stopRecording()
+            guard let self = self else { return }
+
+            // Only stop on release in hold mode
+            if self.settings.recordingMode == .hold {
+                print("[AppDelegate] Hotkey released - stopping dictation")
+                self.stopRecording()
+            }
         }
 
         // Start monitoring for hotkeys if permissions granted
@@ -179,8 +207,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menuItem.title = "Stop Dictation"
         }
 
-        // Show overlay
-        overlayController.show()
+        // Show overlay if enabled in settings
+        if settings.showOverlay {
+            overlayController.show()
+        }
 
         // Clear previous transcription
         speechManager.transcriptionText = ""
@@ -203,8 +233,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menuItem.title = "Start Dictation"
         }
 
-        // Hide overlay
-        overlayController.hide()
+        // Hide overlay if it was shown
+        if settings.showOverlay {
+            overlayController.hide()
+        }
 
         // Stop recognition
         speechManager.stopRecognition()
@@ -234,7 +266,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func insertTranscribedText(_ text: String) {
         do {
-            try textInsertionManager.insertText(text)
+            // Use insertion method based on user settings
+            switch settings.insertionMethod {
+            case .auto:
+                try textInsertionManager.insertText(text)
+            case .direct:
+                try textInsertionManager.insertTextDirect(text)
+            case .clipboard:
+                textInsertionManager.insertViaClipboard(text)
+            case .typing:
+                textInsertionManager.insertViaKeystrokes(text)
+            }
+
             updateMenuStatus("Text inserted successfully")
             print("[AppDelegate] Text inserted: \"\(text)\"")
         } catch {
@@ -257,13 +300,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        // TODO: Implement settings window in Phase 6
-        let alert = NSAlert()
-        alert.messageText = "Settings"
-        alert.informativeText = "Settings will be available in Phase 6."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        // If settings window already exists, just bring it to front
+        if let window = settingsWindow {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        // Create settings window
+        let settingsView = SettingsView()
+        let hostingController = NSHostingController(rootView: settingsView)
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.center()
+
+        // Set as key window and order front
+        window.makeKeyAndOrderFront(nil)
+        window.level = .floating
+
+        // Store reference
+        settingsWindow = window
+
+        // Clear reference when window closes
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.settingsWindow = nil
+        }
     }
 
     @objc private func openPermissions() {
