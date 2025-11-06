@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -51,7 +51,7 @@
 		BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionProcessor.swift; sourceTree = "<group>"; };
 		CB5B01175668DC47D1D6805C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D72B7707C8B0A19A4EFD7057 /* LocalDictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDictationTests.swift; sourceTree = "<group>"; };
-		EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalDictationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA1D81B9EB8356B0155BCE85 /* LocalDictation.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalDictation.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -104,7 +104,7 @@
 			isa = PBXGroup;
 			children = (
 				4EF3761F6F430865EEDDB409 /* LocalDictation.app */,
-				EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */,
+				EA1D81B9EB8356B0155BCE85 /* LocalDictation.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -153,7 +153,7 @@
 			packageProductDependencies = (
 			);
 			productName = LocalDictationTests;
-			productReference = EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */;
+			productReference = EA1D81B9EB8356B0155BCE85 /* LocalDictation.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		4E0094668D6C5203CAADE51D /* LocalDictation */ = {
@@ -180,7 +180,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					34C4134F7AF81D8AB51A47E8 = {
 						DevelopmentTeam = "";
@@ -202,7 +202,6 @@
 			);
 			mainGroup = 3D2AF6538ADEAB4BD13CEEEF;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -287,12 +286,14 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -314,6 +315,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.LocalDictation;
 				PRODUCT_NAME = LocalDictation;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.9;
@@ -327,7 +329,10 @@
 				CODE_SIGN_ENTITLEMENTS = LocalDictation/LocalDictation.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LocalDictation/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -349,6 +354,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -367,7 +373,10 @@
 				CODE_SIGN_ENTITLEMENTS = LocalDictation/LocalDictation.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LocalDictation/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -389,6 +398,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -435,12 +445,14 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -455,6 +467,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.yourname.LocalDictation;
 				PRODUCT_NAME = LocalDictation;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.9;
