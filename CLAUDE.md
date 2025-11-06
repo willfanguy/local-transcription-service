@@ -17,9 +17,9 @@ Local Dictation App - A macOS menu bar application for system-wide voice dictati
 The app is structured into distinct layers:
 
 **Core/** - Core functionality managers:
-- `SpeechRecognitionManager`: Handles SFSpeechRecognizer lifecycle, transcription, and real-time updates. Must handle the undocumented 1-minute continuous recognition limit.
+- `SpeechRecognitionManager`: Handles SFSpeechRecognizer lifecycle, transcription, and real-time updates. Includes automatic punctuation (`addsPunctuation = true`). Must handle the undocumented 1-minute continuous recognition limit.
 - `AudioEngineManager`: Manages AVAudioEngine for microphone input, installs tap on bus 0, feeds audio buffers to speech recognizer
-- `HotkeyManager`: Implements global keyboard monitoring via CGEvent.tapCreate. Requires Accessibility permissions. Handles both "hold to record" and "toggle" recording modes.
+- `HotkeyManager`: Implements global keyboard monitoring via NSEvent monitors (local + global). Monitors keyDown, keyUp, and flagsChanged events. Requires Accessibility permissions. Handles both "hold to record" and "toggle" recording modes. Default: Fn key (keyCode 63).
 - `TextInsertionManager`: Uses Accessibility API (AXUIElement) to insert transcribed text into focused elements. Implements fallback chain: direct API → clipboard paste → simulated typing
 
 **UI/** - User interface components:
@@ -35,7 +35,7 @@ The app is structured into distinct layers:
 
 **Utilities/**:
 - `PermissionsManager`: Centralized permission checking and requesting
-- `AccessibilityHelper`: Wrappers around Accessibility API
+- `TranscriptionProcessor`: Post-processes transcriptions to remove filler words and clean up formatting before insertion
 
 ### Key Implementation Patterns
 
@@ -43,6 +43,7 @@ The app is structured into distinct layers:
 - Always check `isAvailable` before creating recognition tasks
 - Prefer `requiresOnDeviceRecognition = true` for privacy
 - Set `shouldReportPartialResults = true` for real-time UI updates
+- Enable automatic punctuation: `addsPunctuation = true` (macOS 13.0+)
 - Handle the 1-minute recognition timeout with restart logic
 
 **Audio Engine Configuration**:
@@ -51,10 +52,18 @@ The app is structured into distinct layers:
 - Append buffers to `SFSpeechAudioBufferRecognitionRequest`
 
 **Global Hotkey Detection**:
-- Use CGEvent.tapCreate with `.cgSessionEventTap` and `.headInsertEventTap`
-- Monitor `CGEventType.keyDown` events
-- Default hotkey is Fn key (keyCode 63)
+- Use NSEvent monitors: `addLocalMonitorForEvents` and `addGlobalMonitorForEvents`
+- Monitor `.keyDown`, `.keyUp`, and `.flagsChanged` events
+- Fn key sends `.flagsChanged` events (not keyDown/keyUp)
+- Default hotkey is Fn key (keyCode 63 on most modern Macs)
 - Requires Accessibility permissions - check with `AXIsProcessTrusted()`
+- Debug mode available to identify key codes for different keyboards
+
+**Transcription Processing**:
+- Post-process transcriptions with `TranscriptionProcessor` before insertion
+- Removes filler words: um, uh, er, ah, like, you know, I mean, sort of, kind of, basically, etc.
+- Cleans up spacing and fixes capitalization after periods
+- Applied automatically in AppDelegate.stopRecording()
 
 **Text Insertion Strategy** (in priority order):
 1. Direct Accessibility API: `AXUIElementSetAttributeValue` with `kAXValueAttribute`

@@ -12,9 +12,13 @@
 		54722D942A623F6EA7D6A1F3 /* SpeechRecognitionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A47D3B0B4FABB604F64957 /* SpeechRecognitionManager.swift */; };
 		667B11A63B66B635F097696C /* PermissionsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CC5514387AA3CB9DE09CE6C /* PermissionsManager.swift */; };
 		785F880C144679493C19211C /* AudioEngineManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 195F9801C6286D00C97552AE /* AudioEngineManager.swift */; };
+		7C119C3D6C81DBA2180EE16B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2177AE09A50DABB73187099A /* AppDelegate.swift */; };
 		7C97C6669CABE52FEC122871 /* LocalDictationApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 950F29797D4CF29B7A832A02 /* LocalDictationApp.swift */; };
+		900BEFB9727DBA49BD0FA0F8 /* TranscriptionProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */; };
 		A917FE64FB33DFA018CA059D /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB636A2BE4247B3B8A3A40B /* HotkeyManager.swift */; };
 		F3CA3B5F2ACD08E77116CED9 /* TextInsertionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95E9CF3F429328834923C01C /* TextInsertionManager.swift */; };
+		F916B50413BB9F5EFAB698AF /* PermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE13A19049FF6EC8521C6C44 /* PermissionsView.swift */; };
+		FDAA920450594DD67927C8B0 /* TranscriptionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6961284CBB8B19CA3C15F68B /* TranscriptionOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -30,13 +34,17 @@
 /* Begin PBXFileReference section */
 		01A47D3B0B4FABB604F64957 /* SpeechRecognitionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognitionManager.swift; sourceTree = "<group>"; };
 		195F9801C6286D00C97552AE /* AudioEngineManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngineManager.swift; sourceTree = "<group>"; };
+		2177AE09A50DABB73187099A /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		2BA0C3DE9A71DC88EC5CCB5D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		4BB636A2BE4247B3B8A3A40B /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		4EF3761F6F430865EEDDB409 /* LocalDictation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalDictation.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5457123664A44928E4CDD049 /* LocalDictation.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LocalDictation.entitlements; sourceTree = "<group>"; };
 		5CC5514387AA3CB9DE09CE6C /* PermissionsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsManager.swift; sourceTree = "<group>"; };
+		6961284CBB8B19CA3C15F68B /* TranscriptionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionOverlay.swift; sourceTree = "<group>"; };
 		950F29797D4CF29B7A832A02 /* LocalDictationApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDictationApp.swift; sourceTree = "<group>"; };
 		95E9CF3F429328834923C01C /* TextInsertionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInsertionManager.swift; sourceTree = "<group>"; };
+		AE13A19049FF6EC8521C6C44 /* PermissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsView.swift; sourceTree = "<group>"; };
+		BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionProcessor.swift; sourceTree = "<group>"; };
 		CB5B01175668DC47D1D6805C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D72B7707C8B0A19A4EFD7057 /* LocalDictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDictationTests.swift; sourceTree = "<group>"; };
 		EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalDictationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -47,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				5CC5514387AA3CB9DE09CE6C /* PermissionsManager.swift */,
+				BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -63,6 +72,8 @@
 			isa = PBXGroup;
 			children = (
 				2BA0C3DE9A71DC88EC5CCB5D /* ContentView.swift */,
+				AE13A19049FF6EC8521C6C44 /* PermissionsView.swift */,
+				6961284CBB8B19CA3C15F68B /* TranscriptionOverlay.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -91,6 +102,7 @@
 				DF1129A4F707A7AAB87A21F2 /* Core */,
 				2857E42CCDCAF8C09A4996E4 /* UI */,
 				1B272557D8135413E3742413 /* Utilities */,
+				2177AE09A50DABB73187099A /* AppDelegate.swift */,
 				CB5B01175668DC47D1D6805C /* Info.plist */,
 				5457123664A44928E4CDD049 /* LocalDictation.entitlements */,
 				950F29797D4CF29B7A832A02 /* LocalDictationApp.swift */,
@@ -191,13 +203,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7C119C3D6C81DBA2180EE16B /* AppDelegate.swift in Sources */,
 				785F880C144679493C19211C /* AudioEngineManager.swift in Sources */,
 				377AFD0773363A74207D027F /* ContentView.swift in Sources */,
 				A917FE64FB33DFA018CA059D /* HotkeyManager.swift in Sources */,
 				7C97C6669CABE52FEC122871 /* LocalDictationApp.swift in Sources */,
 				667B11A63B66B635F097696C /* PermissionsManager.swift in Sources */,
+				F916B50413BB9F5EFAB698AF /* PermissionsView.swift in Sources */,
 				54722D942A623F6EA7D6A1F3 /* SpeechRecognitionManager.swift in Sources */,
 				F3CA3B5F2ACD08E77116CED9 /* TextInsertionManager.swift in Sources */,
+				FDAA920450594DD67927C8B0 /* TranscriptionOverlay.swift in Sources */,
+				900BEFB9727DBA49BD0FA0F8 /* TranscriptionProcessor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

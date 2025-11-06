@@ -9,11 +9,12 @@ import SwiftUI
 
 @main
 struct LocalDictationApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // Menu bar app - no default window
+        Settings {
+            EmptyView()
         }
-        .windowStyle(.automatic)
-        .windowResizability(.contentSize)
     }
 }

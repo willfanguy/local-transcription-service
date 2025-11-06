@@ -111,6 +111,12 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
 
+        // Enable automatic punctuation
+        if #available(macOS 13.0, *) {
+            recognitionRequest.addsPunctuation = true
+            print("Automatic punctuation enabled")
+        }
+
         // Get input node
         let inputNode = audioEngine.inputNode
 
