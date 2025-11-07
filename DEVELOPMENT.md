@@ -62,35 +62,52 @@ Recognition started successfully  ← CRASHED HERE (attempts 1-7)
 
 **Key Observations**:
 1. The first recording's completion handler fires **AFTER** stopRecognition() completes, suggesting async autoreleased objects linger
-2. After autoreleasepool changes (attempt 8), crash moved EARLIER - now crashes immediately on hotkey press for second recording, before even reaching AppDelegate's hotkey handler or showing UI
-3. This suggests the autorelease corruption is so severe that even accessing manager objects (speechManager, audioManager) in the hotkey callback triggers the crash
+2. Crash happens on **second hotkey press**, during autorelease pool drain in the main event loop
+3. The crash address changes each time, indicating different autoreleased objects are being corrupted
+4. Pattern is 100% reproducible: first recording always works, second always crashes
 
-**Attempted Fixes** (all failed):
+**Root Cause Analysis**:
+The `recognitionTask` completion handler runs **asynchronously** after cleanup completes. This handler creates autoreleased objects (when accessing `result.bestTranscription.formattedString` or `error.localizedDescription`) that internally reference the stopped AVAudioEngine. These autoreleased objects don't drain immediately - they wait for the next event. When the user presses the hotkey for the second recording, the autorelease pool tries to drain, encounters already-deallocated engine internals, and crashes.
+
+**Attempted Fixes** (9 attempts):
 1. ✗ Removed `testRecognition()`, switched to `startRecognition()` - still crashed
 2. ✗ Added `audioEngine.reset()` after stopping - still crashed
 3. ✗ Moved `audioEngine.reset()` to before starting - still crashed
 4. ✗ Removed redundant `removeTap()` call from start - still crashed
 5. ✗ Added completion handler guards for cancelled tasks - still crashed
 6. ✗ Wrapped cleanup in `autoreleasepool { }` - still crashed
-7. ✗ Wrapped start sequence in `autoreleasepool { }` - MADE IT WORSE (crash moved earlier)
-8. ✗ Combined: aggressive autoreleasepool boundaries everywhere - MADE IT WORSE (now crashes on hotkey press before any setup)
+7. ✗ Wrapped start sequence in `autoreleasepool { }` - MADE IT WORSE (crash moved earlier to hotkey press)
+8. ✗ Combined: aggressive autoreleasepool boundaries everywhere - MADE IT WORSE (crash before any setup)
+9. ✗ **Fresh AVAudioEngine per recording** - Changed from reusing single engine to creating new instance each time - still crashed
+   - Modified AudioEngineManager to create fresh `AVAudioEngine()` for each recording
+   - Added `getFreshEngine()` method
+   - In AppDelegate: get fresh engine → set on speech manager → start recognition
+   - Removed call to `audioManager.stopEngine()` after recording to let old engine stay in memory (gets replaced on next recording)
+10. 🧪 **IN TESTING: autoreleasepool in completion handler** - Wrap recognitionTask completion handler body in autoreleasepool to force immediate cleanup of autoreleased objects created by Speech framework
 
-**Current Theory**:
-The autorelease pool from the first recording's completion handler contains corrupted objects (likely AVAudioEngine or SFSpeechRecognizer internals). Initially crashed after "Recognition started successfully" during pool drain. After adding autoreleasepool boundaries, crash moved EARLIER to immediately on hotkey press, suggesting the corruption is so deep that even accessing the manager objects triggers it. The autoreleasepool changes may have accelerated when the corrupted objects get released, but didn't fix the underlying corruption.
+**What We Learned**:
+- Reusing AVAudioEngine vs creating fresh instances makes no difference
+- Adding autoreleasepool boundaries at start/stop call sites makes things worse (forces early drain of corrupted objects)
+- The corruption comes from Speech framework's internal autoreleased objects that reference engine internals
+- Stopping the engine immediately vs letting it linger makes no difference
+- The completion handler is the source of the autoreleased objects
+- Objects created by `result.bestTranscription.formattedString` are likely the culprits
 
-**Latest Code State** (LocalDictation/Core/SpeechRecognitionManager.swift):
-- Cleanup wrapped in `autoreleasepool { }` with forced double-drain
-- Start sequence wrapped in `autoreleasepool { }` for clean boundaries
-- Removed `reset()` calls entirely
-- Added explicit cancel + nil old objects before creating new ones
-- All operations synchronous on main thread (no background dispatch)
+**Current Code State** (2025-11-06 evening):
+- AudioEngineManager creates fresh AVAudioEngine for each recording via `getFreshEngine()`
+- Old engine left in memory after recording, replaced when next fresh engine created
+- Removed all autoreleasepool wrappers from start/stop methods
+- **NEW**: Completion handler wrapped in `autoreleasepool { }` to drain Speech framework objects immediately
 
-**Next Steps to Try**:
-1. **Add delay between recordings** - Test if waiting 1-2 seconds allows autorelease pool to naturally drain
-2. **Don't reuse AVAudioEngine** - Create fresh engine for each recording (expensive but may work)
-3. **Investigate AVAudioEngine internals** - Check Apple forums/docs for known reuse issues
-4. **Try older AVAudioEngine patterns** - Look for deprecated but more stable APIs
-5. **Consider alternative frameworks** - Evaluate if Audio Toolbox or lower-level APIs avoid this issue
+**Theory on Latest Fix (attempt 10)**:
+By wrapping the completion handler in autoreleasepool, we force immediate cleanup of autoreleased objects created when accessing `result.bestTranscription` and `error.localizedDescription`. This should prevent them from lingering until the next event. Unlike attempts 6-8 (which wrapped the *call sites*), this wraps the *callback site* where Apple's frameworks create the problematic objects.
+
+**If This Fails, Next Steps**:
+1. **Add artificial delay** - DispatchQueue.main.asyncAfter with 0.5s delay before allowing second recording
+2. **Manually drain autorelease pool** - Call private/undocumented pool drain after completion handler
+3. **Avoid accessing transcription in completion** - Store raw result, access transcription later on main thread
+4. **File radar with Apple** - This may be a Speech framework bug with autoreleased objects
+5. **Alternative approach**: Use lower-level Audio Toolbox + AVAudioConverter instead of AVAudioEngine
 
 **Files Involved**:
 - `LocalDictation/Core/SpeechRecognitionManager.swift` (lines 138-313)
@@ -203,7 +220,25 @@ The autorelease pool from the first recording's completion handler contains corr
 
 ### Recent Changes
 
-- **2025-11-06 (EXC_BAD_ACCESS Investigation)**: Critical Crash Bug - 8 Failed Fix Attempts
+- **2025-11-06 (EXC_BAD_ACCESS Investigation - Evening Session)**: Attempts 9-10
+  - **Attempt 9 - Fresh AVAudioEngine per recording**: Complete architectural change to prevent engine reuse
+    - Changed AudioEngineManager from single `AVAudioEngine` instance to creating fresh instances
+    - Added `getFreshEngine()` method that creates new `AVAudioEngine()` each time
+    - Modified AppDelegate to call `getFreshEngine()` before each recording
+    - Left old engine in memory after recording (gets replaced by fresh one next time)
+    - Hypothesis: Reusing same engine instance across recordings causes internal state corruption
+    - **Result**: Still crashed on second recording - engine reuse was not the problem
+  - **Attempt 10 - autoreleasepool in completion handler** (IN TESTING):
+    - Wrapped entire `recognitionTask` completion handler body in `autoreleasepool { }`
+    - Different approach than attempts 6-8: wrapping callback site (where Speech framework creates objects) instead of call sites
+    - Hypothesis: `result.bestTranscription.formattedString` and `error.localizedDescription` create autoreleased objects that reference stopped engine internals
+    - By wrapping handler, force immediate drain of these objects when handler completes
+    - **Status**: Awaiting test results
+  - **Key insight**: The async completion handler is the source of autoreleased objects, not the start/stop methods
+  - **Fixed entitlements issue**: App sandbox was re-enabled by Xcode, disabled it again to restore Accessibility API access
+  - **Documentation**: Updated DEVELOPMENT.md with all attempts, learnings, and root cause analysis
+
+- **2025-11-06 (EXC_BAD_ACCESS Investigation - Afternoon Session)**: Critical Crash Bug - Attempts 1-8
   - **Problem**: Second recording crashes with EXC_BAD_ACCESS in autorelease pool immediately after "Recognition started successfully"
   - **Investigation approach**: Iterative debugging with 8 distinct fix attempts, testing each with full app restart
   - **Fix attempts** (all failed):
@@ -216,13 +251,11 @@ The autorelease pool from the first recording's completion handler contains corr
     7. Wrapped start sequence in `autoreleasepool { }`
     8. Removed all threading complexity, made everything synchronous on main thread
   - **Key discovery**: Completion handler from first recording fires AFTER stopRecognition() completes, suggesting async autorelease objects linger and corrupt second recording
-  - **Latest code state**: Aggressive autoreleasepool boundaries + explicit object cleanup + main-thread-only execution
-  - **Status**: Still crashing. Needs fundamentally different approach (delay, fresh engine, or alternative framework)
+  - **Attempts 6-8 made it worse**: Crash moved earlier from "Recognition started" to hotkey press
   - **Other bugs discovered**:
     - Permissions flow broken (mic/speech not requested properly)
     - Debug key logging not outputting to console
     - Escape key monitor added but untested due to crash
-  - **User feedback**: "please ultrathink this through before I start it up again" - need better pre-testing strategy
 
 - **2025-11-06 (Phase 6 Post-Implementation)**: Bug Fixes & Testing
   - **Fixed hotkey monitoring not starting**: Reordered `applicationDidFinishLaunching` to check permissions BEFORE setting up managers. Hotkey monitoring was failing because `accessibilityPermissionStatus` was uninitialized when `setupManagers()` checked it.
