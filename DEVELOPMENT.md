@@ -65,11 +65,26 @@ Recognition started successfully  ← CRASHED HERE (attempts 1-7)
 2. Crash happens on **second hotkey press**, during autorelease pool drain in the main event loop
 3. The crash address changes each time, indicating different autoreleased objects are being corrupted
 4. Pattern is 100% reproducible: first recording always works, second always crashes
+5. **CRITICAL**: Waiting 5-10 seconds between recordings DOES NOT prevent the crash - the zombie object is created when starting the second recording, not lingering from the first
+6. **Malloc debugging shows**: `___forwarding___` - trying to send message to deallocated object (zombie)
 
-**Root Cause Analysis**:
-The `recognitionTask` completion handler runs **asynchronously** after cleanup completes. This handler creates autoreleased objects (when accessing `result.bestTranscription.formattedString` or `error.localizedDescription`) that internally reference the stopped AVAudioEngine. These autoreleased objects don't drain immediately - they wait for the next event. When the user presses the hotkey for the second recording, the autorelease pool tries to drain, encounters already-deallocated engine internals, and crashes.
+**Root Cause Analysis** (revised after 14 failed attempts):
+The crash is NOT from lingering autoreleased objects from the first recording. The zombie object is created **when we start the second recording**. Here's the actual sequence:
 
-**Attempted Fixes** (9 attempts):
+1. First recording creates `engine1`, creates `task1`
+2. Stop recording: cancel `task1`, move to `previousTask` (task still references `engine1`)
+3. Start second recording:
+   - `getFreshEngine()` creates `engine2`
+   - **BUG**: `audioEngine = engine2` loses reference to `engine1`
+   - Inside `startRecognition()`: `previousTask = nil`
+   - `task1.deinit` runs, accesses `engine1` internals for cleanup
+   - Creates autoreleased wrapper objects that reference `engine1`
+   - **But `engine1` has ZERO strong references - it's deallocating**
+4. Autorelease pool drains: wrapper objects try to message deallocating `engine1` → **ZOMBIE CRASH**
+
+The problem is we destroy all references to the old engine BEFORE releasing `previousTask`, so the task's cleanup code creates autoreleased objects pointing to a deallocating engine.
+
+**Attempted Fixes** (14 attempts, all failed):
 1. ✗ Removed `testRecognition()`, switched to `startRecognition()` - still crashed
 2. ✗ Added `audioEngine.reset()` after stopping - still crashed
 3. ✗ Moved `audioEngine.reset()` to before starting - still crashed
@@ -79,35 +94,50 @@ The `recognitionTask` completion handler runs **asynchronously** after cleanup c
 7. ✗ Wrapped start sequence in `autoreleasepool { }` - MADE IT WORSE (crash moved earlier to hotkey press)
 8. ✗ Combined: aggressive autoreleasepool boundaries everywhere - MADE IT WORSE (crash before any setup)
 9. ✗ **Fresh AVAudioEngine per recording** - Changed from reusing single engine to creating new instance each time - still crashed
-   - Modified AudioEngineManager to create fresh `AVAudioEngine()` for each recording
-   - Added `getFreshEngine()` method
-   - In AppDelegate: get fresh engine → set on speech manager → start recognition
-   - Removed call to `audioManager.stopEngine()` after recording to let old engine stay in memory (gets replaced on next recording)
-10. 🧪 **IN TESTING: autoreleasepool in completion handler** - Wrap recognitionTask completion handler body in autoreleasepool to force immediate cleanup of autoreleased objects created by Speech framework
+10. ✗ **autoreleasepool in completion handler** - Wrapped recognitionTask completion handler body in autoreleasepool - still crashed
+11. ✗ **Defer transcription access** - Store raw result, access transcription on main thread instead of in completion handler - still crashed
+12. ✗ **Keep task alive longer** - Move cancelled task to `previousTask`, keep alive until next recording - still crashed
+13. ✗ **Don't stop audio engine** - Leave engine running in stopRecognition(), only stop on replacement - still crashed
+14. ✗ **Don't stop old engine in getFreshEngine()** - Just replace reference, let ARC clean up - still crashed
+15. 🧪 **IN TESTING: Engine History** - Keep old engines alive in array for 2 recording cycles
 
 **What We Learned**:
 - Reusing AVAudioEngine vs creating fresh instances makes no difference
-- Adding autoreleasepool boundaries at start/stop call sites makes things worse (forces early drain of corrupted objects)
-- The corruption comes from Speech framework's internal autoreleased objects that reference engine internals
-- Stopping the engine immediately vs letting it linger makes no difference
-- The completion handler is the source of the autoreleased objects
-- Objects created by `result.bestTranscription.formattedString` are likely the culprits
+- Adding autoreleasepool boundaries at start/stop call sites makes things worse
+- The completion handler is NOT the primary source of autoreleased objects
+- Accessing `result.bestTranscription.formattedString` in different ways makes no difference
+- Stopping the engine timing makes no difference
+- **CRITICAL**: Waiting 5-10 seconds between recordings does NOT prevent crash
+- **CRITICAL**: Malloc debugging shows zombie object (___forwarding___ trying to message deallocated object)
+- **ROOT CAUSE**: When we release `previousTask`, its `deinit` creates autoreleased objects that reference the old engine, but we've already lost all strong references to that engine
 
-**Current Code State** (2025-11-06 evening):
-- AudioEngineManager creates fresh AVAudioEngine for each recording via `getFreshEngine()`
-- Old engine left in memory after recording, replaced when next fresh engine created
-- Removed all autoreleasepool wrappers from start/stop methods
-- **NEW**: Completion handler wrapped in `autoreleasepool { }` to drain Speech framework objects immediately
+**Current Code State** (2025-11-07 attempt 15):
+- AudioEngineManager has `engineHistory: [AVAudioEngine]` array
+- `getFreshEngine()` moves old engine to history BEFORE creating new one
+- Old engines kept alive for 2 recording cycles, then removed
+- This ensures old engine is still alive when `previousTask` deallocates and creates autoreleased cleanup objects
+- SpeechRecognitionManager: doesn't stop engine in cleanup, moves cancelled task to `previousTask`
 
-**Theory on Latest Fix (attempt 10)**:
-By wrapping the completion handler in autoreleasepool, we force immediate cleanup of autoreleased objects created when accessing `result.bestTranscription` and `error.localizedDescription`. This should prevent them from lingering until the next event. Unlike attempts 6-8 (which wrapped the *call sites*), this wraps the *callback site* where Apple's frameworks create the problematic objects.
+**Theory on Latest Fix (attempt 15)**:
+The zombie is created when `previousTask = nil` causes the task's `deinit` to run. That `deinit` accesses the old engine's internals, creating autoreleased wrapper objects. If the old engine has no strong references, those wrappers become zombies. By keeping the old engine in `engineHistory`, it stays alive until all cleanup completes.
 
-**If This Fails, Next Steps**:
-1. **Add artificial delay** - DispatchQueue.main.asyncAfter with 0.5s delay before allowing second recording
-2. **Manually drain autorelease pool** - Call private/undocumented pool drain after completion handler
-3. **Avoid accessing transcription in completion** - Store raw result, access transcription later on main thread
-4. **File radar with Apple** - This may be a Speech framework bug with autoreleased objects
-5. **Alternative approach**: Use lower-level Audio Toolbox + AVAudioConverter instead of AVAudioEngine
+**Flow**:
+1. First recording: `engine1` created
+2. Stop: task cancelled, moved to `previousTask`
+3. Second recording start:
+   - `getFreshEngine()`: move `engine1` to `engineHistory`, create `engine2`
+   - `startRecognition()`: `previousTask = nil` → task `deinit` runs
+   - Task `deinit` creates autoreleased objects referencing `engine1`
+   - **`engine1` still alive in `engineHistory`** ✅
+4. Autorelease pool drains safely
+5. Third recording: `engine1` removed from history (safe now)
+
+**Alternative Approaches if Attempt 15 Fails**:
+1. **Single long-lived engine** - Don't create fresh engines, reuse the same one with proper reset
+2. **Mandatory cooldown period** - Force 2-second delay between recordings (inelegant but might work)
+3. **File-based recognition** - Record to temp file, recognize from file (completely different approach)
+4. **Minimal reproduction case** - Create isolated test to determine if this is Speech framework bug
+5. **File Apple Radar** - Report as potential framework bug with reproduction steps
 
 **Files Involved**:
 - `LocalDictation/Core/SpeechRecognitionManager.swift` (lines 138-313)
@@ -220,7 +250,31 @@ By wrapping the completion handler in autoreleasepool, we force immediate cleanu
 
 ### Recent Changes
 
-- **2025-11-06 (EXC_BAD_ACCESS Investigation - Evening Session)**: Attempts 9-10
+- **2025-11-07 (EXC_BAD_ACCESS Investigation - Session 2)**: Attempts 10-15, Root Cause Identified
+  - **Key Discovery**: User reported that waiting 5-10 seconds between recordings does NOT prevent crash
+    - This invalidates theory that autoreleased objects are lingering from first recording
+    - The zombie is created **when starting the second recording**, not from first recording cleanup
+  - **Malloc Debugging Enabled**: Shows `___forwarding___` - zombie object crash (message to deallocated object)
+  - **Actual Root Cause Identified**:
+    - When `getFreshEngine()` creates `engine2`, we lose all references to `engine1`
+    - When `startRecognition()` does `previousTask = nil`, the task's `deinit` runs
+    - Task `deinit` creates autoreleased cleanup objects that reference `engine1`
+    - But `engine1` has zero strong references (we replaced it) → deallocating → ZOMBIE
+  - **Attempts 10-14** (all failed):
+    10. ✗ Wrapped completion handler in autoreleasepool
+    11. ✗ Deferred transcription access to main thread
+    12. ✗ Kept task alive longer with `previousTask`
+    13. ✗ Don't stop engine in stopRecognition()
+    14. ✗ Don't stop old engine in getFreshEngine()
+  - **Attempt 15** (IN TESTING): **Engine History Array**
+    - Keep old engines alive in `engineHistory: [AVAudioEngine]` array
+    - Move old engine to history BEFORE creating new one
+    - Remove engines after 2 recording cycles (safe by then)
+    - Ensures old engine stays alive while `previousTask.deinit` creates autoreleased cleanup objects
+    - **Theory**: This prevents zombie by keeping engine alive until all cleanup completes
+  - **Alternative approaches documented** if attempt 15 fails: single long-lived engine, mandatory cooldown, file-based recognition, minimal reproduction case, Apple Radar
+
+- **2025-11-06 (EXC_BAD_ACCESS Investigation - Session 1)**: Attempts 9-10
   - **Attempt 9 - Fresh AVAudioEngine per recording**: Complete architectural change to prevent engine reuse
     - Changed AudioEngineManager from single `AVAudioEngine` instance to creating fresh instances
     - Added `getFreshEngine()` method that creates new `AVAudioEngine()` each time
@@ -228,13 +282,12 @@ By wrapping the completion handler in autoreleasepool, we force immediate cleanu
     - Left old engine in memory after recording (gets replaced by fresh one next time)
     - Hypothesis: Reusing same engine instance across recordings causes internal state corruption
     - **Result**: Still crashed on second recording - engine reuse was not the problem
-  - **Attempt 10 - autoreleasepool in completion handler** (IN TESTING):
+  - **Attempt 10 - autoreleasepool in completion handler**:
     - Wrapped entire `recognitionTask` completion handler body in `autoreleasepool { }`
     - Different approach than attempts 6-8: wrapping callback site (where Speech framework creates objects) instead of call sites
     - Hypothesis: `result.bestTranscription.formattedString` and `error.localizedDescription` create autoreleased objects that reference stopped engine internals
     - By wrapping handler, force immediate drain of these objects when handler completes
-    - **Status**: Awaiting test results
-  - **Key insight**: The async completion handler is the source of autoreleased objects, not the start/stop methods
+    - **Result**: Still crashed - completion handler was not the primary source
   - **Fixed entitlements issue**: App sandbox was re-enabled by Xcode, disabled it again to restore Accessibility API access
   - **Documentation**: Updated DEVELOPMENT.md with all attempts, learnings, and root cause analysis
 
