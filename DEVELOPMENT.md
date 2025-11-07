@@ -101,7 +101,9 @@ The problem is we destroy all references to the old engine BEFORE releasing `pre
 14. ✗ **Don't stop old engine in getFreshEngine()** - Just replace reference, let ARC clean up - still crashed
 15. ✗ **Engine History** - Keep old engines alive in array for 2 recording cycles - still crashed
 16. ✗ **Keep request alive too** - Added `previousRequest` to keep recognitionRequest alive along with task - still crashed
-17. 🧪 **IN TESTING: Don't remove tap** - Don't call `removeTap()` in cleanup, leave old engine's tap installed
+17. ✗ **Don't remove tap** - Don't call `removeTap()` in cleanup, leave old engine's tap installed - still crashed (tap was already not being removed)
+18. ✗ **Engine lifecycle & autoreleasepool fixes** - Multiple improvements to prevent zombie objects - still crashed
+19. 🧪 **IN TESTING: Single long-lived engine** - Complete architectural change to reuse the same engine instead of creating fresh ones
 
 **What We Learned**:
 - Reusing AVAudioEngine vs creating fresh instances makes no difference
@@ -117,17 +119,30 @@ The problem is we destroy all references to the old engine BEFORE releasing `pre
 - Keeping request alive (`previousRequest`) helps but not sufficient
 - **Hypothesis**: The `removeTap()` call creates autoreleased cleanup objects that reference the engine's input node
 
-**Current Code State** (2025-11-07 attempt 17):
-- AudioEngineManager has `engineHistory: [AVAudioEngine]` array - keeps old engines alive for 2 recording cycles
+**Current Code State** (2025-11-07 attempt 19):
+- AudioEngineManager:
+  - **MAJOR CHANGE**: Single long-lived `AVAudioEngine` instance (not optional)
+  - No more `getFreshEngine()` or `engineHistory`
+  - `resetEngine()` stops engine and removes tap, but keeps instance
+  - Engine reused across all recordings
 - SpeechRecognitionManager:
-  - Keeps `previousTask` AND `previousRequest` alive until next recording starts
-  - Doesn't stop engine in cleanup (left running until replaced)
-  - **NEW**: Doesn't call `removeTap()` in cleanup - tap left installed (harmless, checks for nil request)
-- `getFreshEngine()` moves old engine to history BEFORE creating new one
-- All three objects (task, request, engine) kept alive to prevent zombie references
+  - Still keeps `previousTask` AND `previousRequest` alive
+  - Wraps cleanup in `autoreleasepool {}`
+  - Starts engine BEFORE installing tap
+  - Small delay after cleanup
+- AppDelegate:
+  - Uses single engine via `audioManager.engine`
+  - Calls `resetEngine()` after each recording instead of replacing
 
-**Theory on Latest Fix (attempt 17)**:
-The `removeTap()` call creates autoreleased cleanup objects when removing the tap from the engine's input node. These objects reference the engine/node internals. Even though we keep the engine alive, removing the tap might create problematic autoreleased references. By NOT removing the tap, we avoid this cleanup. The tap is harmless - its closure checks if `recognitionRequest` exists and returns early if nil.
+**Theory on Latest Fix (attempt 19)**:
+Since keeping old engines alive didn't work, we're taking the opposite approach: **single long-lived engine**. By reusing the same `AVAudioEngine` instance across all recordings:
+1. No engine creation/destruction cycle that could create zombies
+2. No complex reference management with engine history
+3. Simple reset between recordings (stop engine, remove tap)
+4. The engine instance stays alive for the app's lifetime
+5. Should eliminate any engine-related zombie objects
+
+This is a simpler, more traditional approach that many audio apps use successfully.
 
 **Flow**:
 1. First recording: `engine1` created
@@ -288,6 +303,35 @@ The `removeTap()` call creates autoreleased cleanup objects when removing the ta
     - Ensures old engine stays alive while `previousTask.deinit` creates autoreleased cleanup objects
     - **Theory**: This prevents zombie by keeping engine alive until all cleanup completes
   - **Alternative approaches documented** if attempt 15 fails: single long-lived engine, mandatory cooldown, file-based recognition, minimal reproduction case, Apple Radar
+
+- **2025-11-07 (EXC_BAD_ACCESS Investigation - Session 3)**: Attempt 18 - Comprehensive Fix
+  - **Analysis**: Reviewed code and found attempts 15-17 were implemented but crash persists
+  - **Key findings**:
+    - Engine history approach (attempt 15) is in place
+    - Previous task/request preservation (attempt 16) is in place
+    - No tap removal was happening (attempt 17 was already effective)
+  - **Attempt 18 - Engine lifecycle & autoreleasepool fixes**:
+    - Changed engine startup order: prepare and start BEFORE installing tap (ensures stable state)
+    - Added autoreleasepool wrapper around cleanup to immediately drain autoreleased objects
+    - Added engine.stop() before moving to history (clean shutdown)
+    - Added small delay after cleanup to ensure pool drained
+    - **Theory**: Combination of proper lifecycle management and immediate autorelease drainage
+  - **Build Status**: Successful compilation, ready for testing
+  - **Test Result**: Still crashed on second recording
+
+- **2025-11-07 (Permissions & Attempt 19)**: Single Long-Lived Engine
+  - **Permissions improvements**:
+    - Added `requestPermissionsIfNeeded()` to auto-request mic and speech on startup
+    - Added one-time accessibility permission alert on first launch
+    - Stores flag to avoid repeatedly showing accessibility dialog
+    - Much smoother permission flow for testing
+  - **Attempt 19 - Single long-lived engine**:
+    - Complete reversal of approach: one engine for app lifetime
+    - Removed `getFreshEngine()` and `engineHistory`
+    - Engine is now non-optional constant
+    - `resetEngine()` just stops and removes tap, doesn't destroy
+    - **Theory**: Simpler architecture eliminates engine lifecycle zombies
+  - **Build Status**: Successful compilation, ready for testing
 
 - **2025-11-06 (EXC_BAD_ACCESS Investigation - Session 1)**: Attempts 9-10
   - **Attempt 9 - Fresh AVAudioEngine per recording**: Complete architectural change to prevent engine reuse

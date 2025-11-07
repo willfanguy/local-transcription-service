@@ -149,26 +149,32 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     }
 
     private func performStartRecognition(audioEngine: AVAudioEngine, recognizer: SFSpeechRecognizer) throws {
-        // CRITICAL: Release previous task AND request together
-        // The cancelled task has autoreleased objects that reference the request
-        // By now, any autoreleased objects from cancellation should have drained
-        if previousTask != nil || previousRequest != nil {
-            print("Releasing previous recording's task and request")
-            previousTask = nil
-            previousRequest = nil
+        // CRITICAL: Wrap the cleanup in autoreleasepool to immediately drain any
+        // autoreleased objects created during task/request deinitialization
+        autoreleasepool {
+            // Release previous task AND request together
+            // The cancelled task has autoreleased objects that reference the request
+            if previousTask != nil || previousRequest != nil {
+                print("Releasing previous recording's task and request (in autoreleasepool)")
+                previousTask = nil
+                previousRequest = nil
+            }
+
+            // Ensure any old objects are cleaned up before creating new ones
+            if recognitionRequest != nil || recognitionTask != nil {
+                print("⚠️ Warning: Old recognition objects still exist, cleaning up first")
+
+                // Cancel and clear references
+                recognitionTask?.cancel()
+                recognitionRequest = nil
+                recognitionTask = nil
+
+                print("Old objects cleared")
+            }
         }
 
-        // Ensure any old objects are cleaned up before creating new ones
-        if recognitionRequest != nil || recognitionTask != nil {
-            print("⚠️ Warning: Old recognition objects still exist, cleaning up first")
-
-            // Cancel and clear references
-            recognitionTask?.cancel()
-            recognitionRequest = nil
-            recognitionTask = nil
-
-            print("Old objects cleared")
-        }
+        // Small delay to ensure autorelease pool has drained
+        Thread.sleep(forTimeInterval: 0.01)
 
         // Create recognition request
         try createAndStartRecognition(audioEngine: audioEngine, recognizer: recognizer)
@@ -206,6 +212,12 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         // Note: We don't remove the old tap - we're using a fresh engine for each recording
         // The old engine (with its tap) is kept alive in engineHistory
 
+        // CRITICAL: Start the engine BEFORE installing the tap
+        // This ensures the engine is in a stable state before we modify its input node
+        audioEngine.prepare()
+        try audioEngine.start()
+        print("Audio engine prepared and started")
+
         // Install tap with buffer size 1024
         // Use weak reference to prevent retain cycles and safely handle cleanup
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
@@ -215,12 +227,7 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
             }
             request.append(buffer)
         }
-        print("Audio tap installed")
-
-        // Prepare and start audio engine
-        audioEngine.prepare()
-        try audioEngine.start()
-        print("Audio engine started")
+        print("Audio tap installed on running engine")
 
         // Create recognition task
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in

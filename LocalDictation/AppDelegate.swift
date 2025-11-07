@@ -47,6 +47,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check permissions on launch (BEFORE setting up managers)
         permissionsManager.checkAllPermissions()
 
+        // Request permissions if not determined
+        requestPermissionsIfNeeded()
+
         // Setup managers (needs permissions to be checked first)
         setupManagers()
 
@@ -62,6 +65,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             stopRecording()
         }
         hotkeyManager.stopMonitoring()
+    }
+
+    private func requestPermissionsIfNeeded() {
+        // Request microphone permission if not determined
+        if permissionsManager.microphonePermissionStatus == .notDetermined {
+            print("[AppDelegate] Requesting microphone permission...")
+            permissionsManager.requestMicrophonePermission { granted in
+                print("[AppDelegate] Microphone permission: \(granted ? "granted" : "denied")")
+            }
+        }
+
+        // Request speech recognition permission if not determined
+        if permissionsManager.speechRecognitionPermissionStatus == .notDetermined {
+            print("[AppDelegate] Requesting speech recognition permission...")
+            permissionsManager.requestSpeechRecognitionPermission { status in
+                print("[AppDelegate] Speech recognition permission: \(status)")
+            }
+        }
+
+        // For Accessibility: Don't auto-request on every launch (annoying)
+        // We'll show a one-time alert when they first try to use the hotkey
+        if !permissionsManager.accessibilityPermissionStatus {
+            print("[AppDelegate] Accessibility not granted - will prompt when needed")
+        }
     }
 
     private func setupMenu() {
@@ -156,6 +183,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("[AppDelegate] Hotkey monitoring started")
         } else {
             print("[AppDelegate] Accessibility permission not granted - hotkey monitoring disabled")
+
+            // Show alert to request accessibility permission on first launch
+            if !UserDefaults.standard.bool(forKey: "HasShownAccessibilityAlert") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    self.showAccessibilityPermissionAlert()
+                    UserDefaults.standard.set(true, forKey: "HasShownAccessibilityAlert")
+                }
+            }
         }
     }
 
@@ -216,10 +251,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear previous transcription
         speechManager.transcriptionText = ""
 
-        // Get a fresh audio engine for this recording session
-        let freshEngine = audioManager.getFreshEngine()
-        speechManager.setAudioEngine(freshEngine)
-        print("[AppDelegate] Fresh audio engine created and set")
+        // Set the audio engine for speech manager (single long-lived instance)
+        speechManager.setAudioEngine(audioManager.engine)
+        print("[AppDelegate] Audio engine set for recognition")
 
         // Start recognition (must be on main thread for AVAudioEngine)
         do {
@@ -280,10 +314,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Stop recognition
         speechManager.stopRecognition()
 
-        // DON'T destroy the engine immediately - the recognitionTask completion handler
-        // may still be running asynchronously with autoreleased references to engine internals.
-        // The old engine will be replaced when we create a fresh one for the next recording.
-        print("[AppDelegate] Audio engine stopped (will be replaced on next recording)")
+        // Reset the engine for next use
+        audioManager.resetEngine()
+        print("[AppDelegate] Audio engine reset for next recording")
 
         // Get transcribed text
         let transcribedText = speechManager.transcriptionText
@@ -340,6 +373,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if alert.runModal() == .alertFirstButtonReturn {
             openPermissions()
+        }
+    }
+
+    private func showAccessibilityPermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Required"
+        alert.informativeText = """
+        Local Dictation needs Accessibility permission to detect the Fn key globally.
+
+        After clicking 'Open System Settings':
+        1. Click the '+' button in System Settings
+        2. Navigate to the app location:
+           ~/Library/Developer/Xcode/DerivedData/.../Debug/LocalDictation.app
+        3. Add LocalDictation to the list
+        4. Enable the checkbox
+
+        Note: macOS security requires you to manually add the app.
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            // Don't call requestAccessibilityPermission() - it shows another dialog
+            // Just open System Settings directly
+            permissionsManager.openAccessibilitySettings()
         }
     }
 
@@ -480,18 +539,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("⚠️  ACCESSIBILITY NOT GRANTED - Hotkey detection will not work!")
             print("   Open System Settings > Privacy & Security > Accessibility")
             print("   Enable LocalDictation")
-
-            // Show alert
-            let alert = NSAlert()
-            alert.messageText = "Accessibility Permission Required"
-            alert.informativeText = "LocalDictation needs Accessibility permission to detect the Fn key globally.\n\nPlease grant permission in System Settings."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Cancel")
-
-            if alert.runModal() == .alertFirstButtonReturn {
-                permissionsManager.openAccessibilitySettings()
-            }
+            // Don't show alert here - we already showed it on startup if needed
         } else if !hotkeyManager.isMonitoring {
             print("⚠️  HOTKEY MONITORING NOT ACTIVE!")
             print("   Accessibility is granted but monitoring failed to start")

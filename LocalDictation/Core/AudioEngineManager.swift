@@ -13,12 +13,8 @@ class AudioEngineManager: ObservableObject {
 
     // MARK: - Properties
 
-    /// The audio engine instance - created fresh for each recording session
-    private var audioEngine: AVAudioEngine?
-
-    /// Keep old engines alive to prevent autoreleased cleanup objects from crashing
-    /// Engines are removed after 2 recording cycles (gives plenty of time for cleanup)
-    private var engineHistory: [AVAudioEngine] = []
+    /// The audio engine instance - single long-lived instance
+    private let audioEngine = AVAudioEngine()
 
     // MARK: - Published Properties
 
@@ -31,118 +27,77 @@ class AudioEngineManager: ObservableObject {
     // MARK: - Computed Properties
 
     /// Get the current audio engine (for use by SpeechRecognitionManager)
-    var engine: AVAudioEngine? {
+    var engine: AVAudioEngine {
         return audioEngine
     }
 
     /// Check if engine is currently running
     var engineIsRunning: Bool {
-        return audioEngine?.isRunning ?? false
+        return audioEngine.isRunning
     }
 
     // MARK: - Initialization
 
     init() {
         print("AudioEngineManager initialized")
-        print("Fresh audio engine will be created for each recording session")
+        print("Using single long-lived audio engine instance")
     }
 
     // MARK: - Public Methods
 
-    /// Get a fresh audio engine instance for a new recording session
-    func getFreshEngine() -> AVAudioEngine {
-        // CRITICAL: Move old engine to history BEFORE creating new one
-        // This keeps the old engine alive while its associated task's autoreleased
-        // cleanup objects complete. Without this, those cleanup objects become zombies.
-        if let oldEngine = audioEngine {
-            print("Moving old engine to history (keeping alive for cleanup)")
-            engineHistory.append(oldEngine)
-        }
-
-        // Clean up engines older than 2 recording cycles
-        // By this point, all autoreleased cleanup from old recordings has completed
-        if engineHistory.count > 2 {
-            let removed = engineHistory.removeFirst()
-            print("Removed oldest engine from history (count was \(engineHistory.count + 1))")
-        }
-
-        // Create fresh engine
-        print("Creating fresh AVAudioEngine instance")
-        let freshEngine = AVAudioEngine()
-        audioEngine = freshEngine
-
-        return freshEngine
-    }
-
-    /// Start the audio engine - creates a fresh engine for each session
+    /// Start the audio engine
     func startEngine() throws {
         print("Starting audio engine...")
 
-        // Check if there's already a running engine
-        if let engine = audioEngine, engine.isRunning {
+        // Check if already running
+        if audioEngine.isRunning {
             print("Audio engine already running")
             return
         }
 
         do {
-            // CRITICAL: Create a FRESH engine for each recording session
-            // This prevents autorelease pool corruption from reusing the same engine
-            print("Creating fresh AVAudioEngine instance...")
-            audioEngine = AVAudioEngine()
-
-            guard let engine = audioEngine else {
-                throw AudioEngineError.inputNodeUnavailable
-            }
-
             // Prepare the engine
-            engine.prepare()
+            audioEngine.prepare()
 
             // Start the engine
-            try engine.start()
+            try audioEngine.start()
 
             isRunning = true
-            print("Audio engine started successfully (fresh instance)")
+            print("Audio engine started successfully")
             printEngineConfiguration()
 
         } catch {
             print("Failed to start audio engine: \(error.localizedDescription)")
             currentError = error
             isRunning = false
-            audioEngine = nil // Clean up on failure
             throw error
         }
     }
 
-    /// Stop the audio engine and destroy the instance
+    /// Stop the audio engine
     func stopEngine() {
         print("Stopping audio engine...")
 
-        guard let engine = audioEngine else {
-            print("No audio engine to stop")
-            return
-        }
-
-        if !engine.isRunning {
+        if !audioEngine.isRunning {
             print("Audio engine already stopped")
-            audioEngine = nil // Clean up even if already stopped
             isRunning = false
             return
         }
 
-        engine.stop()
+        audioEngine.stop()
         isRunning = false
-
-        // CRITICAL: Nil out the engine to release all resources
-        // Next recording will get a completely fresh engine
-        audioEngine = nil
-        print("Audio engine stopped and destroyed")
+        print("Audio engine stopped")
     }
 
-    /// Reset the audio engine (equivalent to stop with fresh engine approach)
+    /// Reset the audio engine
     func resetEngine() {
         print("Resetting audio engine...")
         stopEngine()
-        print("Audio engine reset completed (instance destroyed)")
+
+        // Remove any existing tap
+        audioEngine.inputNode.removeTap(onBus: 0)
+
+        print("Audio engine reset completed")
     }
 
     /// Setup audio tap for recording (called by SpeechRecognitionManager)
@@ -150,12 +105,7 @@ class AudioEngineManager: ObservableObject {
                       format: AVAudioFormat? = nil,
                       tapBlock: @escaping AVAudioNodeTapBlock) {
 
-        guard let engine = audioEngine else {
-            print("ERROR: Cannot setup tap - no audio engine")
-            return
-        }
-
-        let inputNode = engine.inputNode
+        let inputNode = audioEngine.inputNode
         let recordingFormat = format ?? inputNode.outputFormat(forBus: 0)
 
         // Remove any existing tap
@@ -173,11 +123,7 @@ class AudioEngineManager: ObservableObject {
 
     /// Remove audio tap
     func removeAudioTap() {
-        guard let engine = audioEngine else {
-            print("No audio engine - tap already removed")
-            return
-        }
-        engine.inputNode.removeTap(onBus: 0)
+        audioEngine.inputNode.removeTap(onBus: 0)
         print("Audio tap removed")
     }
 
@@ -185,18 +131,11 @@ class AudioEngineManager: ObservableObject {
 
     /// Print current engine configuration for debugging
     private func printEngineConfiguration() {
-        guard let engine = audioEngine else {
-            print("=== Audio Engine Configuration ===")
-            print("No engine instance")
-            print("================================")
-            return
-        }
-
-        let inputNode = engine.inputNode
+        let inputNode = audioEngine.inputNode
         let outputFormat = inputNode.outputFormat(forBus: 0)
 
         print("=== Audio Engine Configuration ===")
-        print("Running: \(engine.isRunning)")
+        print("Running: \(audioEngine.isRunning)")
         print("Input channels: \(outputFormat.channelCount)")
         print("Sample rate: \(outputFormat.sampleRate)")
         print("Format: \(outputFormat.formatDescription)")
@@ -231,8 +170,6 @@ class AudioEngineManager: ObservableObject {
 
     deinit {
         stopEngine()
-        audioEngine = nil
-        engineHistory.removeAll()
         print("AudioEngineManager deinitialized")
     }
 }
