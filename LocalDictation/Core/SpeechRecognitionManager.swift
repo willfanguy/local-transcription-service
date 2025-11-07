@@ -23,6 +23,9 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     /// The current recognition task
     private var recognitionTask: SFSpeechRecognitionTask?
 
+    /// Keep old task alive to prevent autoreleased cleanup objects from corrupting
+    private var previousTask: SFSpeechRecognitionTask?
+
     /// The audio engine (will be provided by AudioEngineManager)
     private var audioEngine: AVAudioEngine?
 
@@ -36,6 +39,9 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
     /// Current error if any
     @Published var currentError: Error?
+
+    /// Store the raw result to avoid accessing transcription in completion handler
+    private var lastResult: SFSpeechRecognitionResult?
 
     /// Flag to prevent concurrent stop operations
     private var isStopping: Bool = false
@@ -140,14 +146,19 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     }
 
     private func performStartRecognition(audioEngine: AVAudioEngine, recognizer: SFSpeechRecognizer) throws {
+        // Release the previous recording's task (if any)
+        // By now, any autoreleased objects from its cancellation should have drained
+        if previousTask != nil {
+            print("Releasing previous recording's task")
+            previousTask = nil
+        }
+
         // Ensure any old objects are cleaned up before creating new ones
         if recognitionRequest != nil || recognitionTask != nil {
             print("⚠️ Warning: Old recognition objects still exist, cleaning up first")
 
-            // Cancel old task if it exists
+            // Cancel and clear references
             recognitionTask?.cancel()
-
-            // Clear references
             recognitionRequest = nil
             recognitionTask = nil
 
@@ -159,6 +170,9 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     }
 
     private func createAndStartRecognition(audioEngine: AVAudioEngine, recognizer: SFSpeechRecognizer) throws {
+        // Clear any previous result
+        lastResult = nil
+
         // Create recognition request
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else {
@@ -204,53 +218,56 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
         // Create recognition task
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            // CRITICAL: Wrap entire handler in autoreleasepool to immediately drain
-            // any autoreleased objects created by Speech framework
-            autoreleasepool {
-                guard let self = self else { return }
+            guard let self = self else { return }
 
-                // CRITICAL: Check if this task was cancelled (old task from previous recording)
-                // If cancelled, don't update state to avoid interfering with new recording
-                if error != nil {
-                    let nsError = error! as NSError
-                    if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
-                        print("⚠️ Completion handler from cancelled task ignored")
-                        return
-                    }
+            // CRITICAL: Check if this task was cancelled (old task from previous recording)
+            // If cancelled, don't update state to avoid interfering with new recording
+            if error != nil {
+                let nsError = error! as NSError
+                if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
+                    print("⚠️ Completion handler from cancelled task ignored")
+                    return
                 }
+            }
 
-                var isFinal = false
+            var isFinal = false
 
-                if let result = result {
-                    // Update transcription
+            if let result = result {
+                // CRITICAL: Store raw result instead of accessing transcription here
+                // Accessing result.bestTranscription.formattedString creates autoreleased
+                // objects that reference engine internals
+                self.lastResult = result
+                isFinal = result.isFinal
+
+                // Extract transcription on main thread to avoid autoreleased references
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, let result = self.lastResult else { return }
                     self.transcriptionText = result.bestTranscription.formattedString
-                    isFinal = result.isFinal
-
                     print("Transcribed: \(self.transcriptionText)")
-
-                    if isFinal {
-                        print("Recognition final result received")
-                    }
                 }
 
-                if let error = error {
-                    print("Recognition error: \(error.localizedDescription)")
-                    self.currentError = error
-
-                    // Check for 1-minute timeout
-                    if (error as NSError).code == 203 {
-                        print("Recognition timeout (1-minute limit reached)")
-                    }
+                if isFinal {
+                    print("Recognition final result received")
                 }
+            }
 
-                // Don't call stopRecognition() here - let the caller handle stopping
-                // This prevents race conditions with manual stops
-                if error != nil || isFinal {
-                    print("Recognition task completed (final: \(isFinal), error: \(error != nil))")
-                    // Just mark as not recognizing, don't do full cleanup
-                    DispatchQueue.main.async {
-                        self.isRecognizing = false
-                    }
+            if let error = error {
+                print("Recognition error: \(error.localizedDescription)")
+                self.currentError = error
+
+                // Check for 1-minute timeout
+                if (error as NSError).code == 203 {
+                    print("Recognition timeout (1-minute limit reached)")
+                }
+            }
+
+            // Don't call stopRecognition() here - let the caller handle stopping
+            // This prevents race conditions with manual stops
+            if error != nil || isFinal {
+                print("Recognition task completed (final: \(isFinal), error: \(error != nil))")
+                // Just mark as not recognizing, don't do full cleanup
+                DispatchQueue.main.async {
+                    self.isRecognizing = false
                 }
             }
         }
@@ -279,27 +296,27 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         isCleaningUp = true
         print("Stopping speech recognition...")
 
-        // 1. Stop audio engine
-        if let audioEngine = audioEngine, audioEngine.isRunning {
-            audioEngine.stop()
-            print("Audio engine stopped")
-        }
-
-        // 2. Stop recognition request
+        // 1. Stop recognition request FIRST (before stopping engine)
         if let request = recognitionRequest {
             request.endAudio()
             recognitionRequest = nil
             print("Recognition request ended")
         }
 
-        // 3. Cancel recognition task
+        // 2. Cancel recognition task and move to previousTask to keep alive
+        // Cancellation creates autoreleased objects - keep task alive to prevent corruption
         if let task = recognitionTask {
             task.cancel()
+            previousTask = task  // Keep alive until next recording
             recognitionTask = nil
-            print("Recognition task cancelled")
+            print("Recognition task cancelled and moved to previousTask")
         }
 
-        // 4. Remove tap (engine is stopped, so this is safe)
+        // 3. DON'T stop the audio engine - let it keep running until replaced
+        // Stopping it might cause the cancelled task's cleanup to reference deallocated memory
+        print("Audio engine left running (will be replaced by fresh engine on next recording)")
+
+        // 4. Remove tap
         if let audioEngine = audioEngine, audioEngine.inputNode.numberOfInputs > 0 {
             audioEngine.inputNode.removeTap(onBus: 0)
             print("Audio tap removed")

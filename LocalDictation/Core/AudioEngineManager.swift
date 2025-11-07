@@ -16,6 +16,10 @@ class AudioEngineManager: ObservableObject {
     /// The audio engine instance - created fresh for each recording session
     private var audioEngine: AVAudioEngine?
 
+    /// Keep old engines alive to prevent autoreleased cleanup objects from crashing
+    /// Engines are removed after 2 recording cycles (gives plenty of time for cleanup)
+    private var engineHistory: [AVAudioEngine] = []
+
     // MARK: - Published Properties
 
     /// Whether the audio engine is currently running
@@ -47,10 +51,19 @@ class AudioEngineManager: ObservableObject {
 
     /// Get a fresh audio engine instance for a new recording session
     func getFreshEngine() -> AVAudioEngine {
-        // Stop and destroy any existing engine first
-        if let existingEngine = audioEngine, existingEngine.isRunning {
-            print("Stopping existing engine before creating fresh one")
-            existingEngine.stop()
+        // CRITICAL: Move old engine to history BEFORE creating new one
+        // This keeps the old engine alive while its associated task's autoreleased
+        // cleanup objects complete. Without this, those cleanup objects become zombies.
+        if let oldEngine = audioEngine {
+            print("Moving old engine to history (keeping alive for cleanup)")
+            engineHistory.append(oldEngine)
+        }
+
+        // Clean up engines older than 2 recording cycles
+        // By this point, all autoreleased cleanup from old recordings has completed
+        if engineHistory.count > 2 {
+            let removed = engineHistory.removeFirst()
+            print("Removed oldest engine from history (count was \(engineHistory.count + 1))")
         }
 
         // Create fresh engine
@@ -219,6 +232,7 @@ class AudioEngineManager: ObservableObject {
     deinit {
         stopEngine()
         audioEngine = nil
+        engineHistory.removeAll()
         print("AudioEngineManager deinitialized")
     }
 }
