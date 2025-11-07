@@ -232,11 +232,18 @@ The zombie is created when `previousTask = nil` causes the task's `deinit` to ru
 ### Other Known Bugs (Non-Blocking)
 
 **High Priority**:
-- ⚠️ **Permissions flow broken** (2025-11-06): App no longer requests microphone/speech recognition permissions properly. Only shows accessibility dialog. Permissions get granted eventually but flow is messy with multiple dialogs.
-  - Console shows "Microphone permission status: Not Determined" repeatedly
-  - No permission request dialog appears for mic/speech
-  - Eventually permissions get authorized but unclear how
-  - Needs: Review permission request flow in PermissionsManager
+- ⚠️ **Permissions flow broken** (2025-11-06, ongoing 2025-11-07): App only requests Accessibility permission, not microphone or speech recognition
+  - **What happens**: Only Accessibility dialog appears on first launch
+  - **Accessibility workflow**: Dialog shows but app is NOT automatically added to System Settings > Privacy & Security > Accessibility
+    - User must manually navigate to build folder: `/Users/[user]/Library/Developer/Xcode/DerivedData/LocalDictation-*/Build/Products/Debug/`
+    - Drag LocalDictation.app into Accessibility settings manually
+    - Or use the "+" button to browse to the app location
+  - **Microphone/Speech**: No permission dialogs appear at all
+  - Console shows "Microphone permission status: Not Determined" and "Speech recognition permission status: Not Determined" repeatedly
+  - Permissions eventually get authorized but mechanism unclear - possibly on first attempted use
+  - **Root cause**: Unknown - permission request flow in PermissionsManager needs investigation
+  - **Workaround**: Manually add app to Accessibility, mic/speech seem to grant automatically on first recording attempt
+  - **Impact**: Confusing UX on fresh install, requires manual intervention
 - ⚠️ **Filler word removal not working**: TranscriptionProcessor is implemented but filler words are not being removed from transcriptions
 - ⚠️ **Automatic punctuation not working**: `addsPunctuation = true` is set but punctuation is not appearing in transcriptions
 
