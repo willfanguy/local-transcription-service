@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -17,6 +17,10 @@
 		7F188710021EE7234FE9ABB0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2A5F7D6FBB0D060BA0EEF2 /* AppSettings.swift */; };
 		900BEFB9727DBA49BD0FA0F8 /* TranscriptionProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */; };
 		A917FE64FB33DFA018CA059D /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB636A2BE4247B3B8A3A40B /* HotkeyManager.swift */; };
+		BEAA7E5E2EBE7BDF000A4D55 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEAA7E5D2EBE7BDF000A4D55 /* DebugLogger.swift */; };
+		BEAA7E5F2EBE7BDF000A4D55 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEAA7E5D2EBE7BDF000A4D55 /* DebugLogger.swift */; };
+		BEAA7E612EBE7BF3000A4D55 /* CrashTestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEAA7E602EBE7BF3000A4D55 /* CrashTestHarness.swift */; };
+		BEAA7E622EBE7BF3000A4D55 /* CrashTestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEAA7E602EBE7BF3000A4D55 /* CrashTestHarness.swift */; };
 		F3CA3B5F2ACD08E77116CED9 /* TextInsertionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95E9CF3F429328834923C01C /* TextInsertionManager.swift */; };
 		F67310C7DA50E6FF55396FB0 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23321C6829EBC42AE387EF40 /* SettingsView.swift */; };
 		F916B50413BB9F5EFAB698AF /* PermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE13A19049FF6EC8521C6C44 /* PermissionsView.swift */; };
@@ -49,19 +53,30 @@
 		9D2A5F7D6FBB0D060BA0EEF2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		AE13A19049FF6EC8521C6C44 /* PermissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsView.swift; sourceTree = "<group>"; };
 		BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionProcessor.swift; sourceTree = "<group>"; };
+		BEAA7E5D2EBE7BDF000A4D55 /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
+		BEAA7E602EBE7BF3000A4D55 /* CrashTestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashTestHarness.swift; sourceTree = "<group>"; };
 		CB5B01175668DC47D1D6805C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D72B7707C8B0A19A4EFD7057 /* LocalDictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDictationTests.swift; sourceTree = "<group>"; };
-		EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocalDictationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA1D81B9EB8356B0155BCE85 /* LocalDictationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; name = LocalDictationTests.xctest; path = LocalDictation.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
 		1B272557D8135413E3742413 /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				BEAA7E5D2EBE7BDF000A4D55 /* DebugLogger.swift */,
 				5CC5514387AA3CB9DE09CE6C /* PermissionsManager.swift */,
 				BCAB283B01E25FF6F4B9B00B /* TranscriptionProcessor.swift */,
 			);
 			path = Utilities;
+			sourceTree = "<group>";
+		};
+		A2E3F8B4C1D2A6F9E5B7C3D1 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				BEAA7E602EBE7BF3000A4D55 /* CrashTestHarness.swift */,
+			);
+			path = Debug;
 			sourceTree = "<group>";
 		};
 		237ECB9FA202BEDC7CC0298A /* LocalDictationTests */ = {
@@ -113,6 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				DF1129A4F707A7AAB87A21F2 /* Core */,
+				A2E3F8B4C1D2A6F9E5B7C3D1 /* Debug */,
 				440B2DA7539C091B959FE395 /* Models */,
 				2857E42CCDCAF8C09A4996E4 /* UI */,
 				1B272557D8135413E3742413 /* Utilities */,
@@ -202,7 +218,6 @@
 			);
 			mainGroup = 3D2AF6538ADEAB4BD13CEEEF;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -218,8 +233,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				7C119C3D6C81DBA2180EE16B /* AppDelegate.swift in Sources */,
+				BEAA7E5E2EBE7BDF000A4D55 /* DebugLogger.swift in Sources */,
 				7F188710021EE7234FE9ABB0 /* AppSettings.swift in Sources */,
 				785F880C144679493C19211C /* AudioEngineManager.swift in Sources */,
+				BEAA7E612EBE7BF3000A4D55 /* CrashTestHarness.swift in Sources */,
 				377AFD0773363A74207D027F /* ContentView.swift in Sources */,
 				A917FE64FB33DFA018CA059D /* HotkeyManager.swift in Sources */,
 				7C97C6669CABE52FEC122871 /* LocalDictationApp.swift in Sources */,
@@ -238,6 +255,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				2E90D5BE1C6CEF1552A97F8E /* LocalDictationTests.swift in Sources */,
+				BEAA7E622EBE7BF3000A4D55 /* CrashTestHarness.swift in Sources */,
+				BEAA7E5F2EBE7BDF000A4D55 /* DebugLogger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

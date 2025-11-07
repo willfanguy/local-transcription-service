@@ -21,7 +21,8 @@ class PermissionsManager: ObservableObject {
 
     // MARK: - Initialization
     private init() {
-        checkAllPermissions()
+        // Don't check permissions immediately to avoid TCC crashes on startup
+        // Permissions will be checked when needed
     }
 
     // MARK: - Public Methods

@@ -26,6 +26,13 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     /// The audio engine (will be provided by AudioEngineManager)
     private var audioEngine: AVAudioEngine?
 
+    /// Track timing for debugging
+    private var recognitionStartTime: Date?
+    private var lastPartialResultTime: Date?
+
+    /// Debug logger instance
+    private let logger = DebugLogger.shared
+
     // MARK: - Published Properties
 
     /// Current transcription text
@@ -41,6 +48,8 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        logger.logLifecycle(self, event: .initialized, additionalInfo: "SpeechRecognitionManager created")
+        logger.markEvent("SPEECH_RECOGNITION_MANAGER_INIT")
         setupSpeechRecognizer()
     }
 
@@ -48,6 +57,8 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
     /// Initialize the speech recognizer
     private func setupSpeechRecognizer() {
+        logger.logMethodEntry("setupSpeechRecognizer", parameters: "locale: en-US")
+
         // Create recognizer for US English
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
 
@@ -56,18 +67,21 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
         // Check availability
         if let recognizer = speechRecognizer {
-            print("=== Speech Recognizer Status ===")
-            print("Available: \(recognizer.isAvailable)")
-            print("Locale: \(recognizer.locale)")
-            print("Supports on-device recognition: \(recognizer.supportsOnDeviceRecognition)")
+            logger.logLifecycle(recognizer, event: .initialized, additionalInfo: "locale: \(recognizer.locale)")
+            logger.log("=== Speech Recognizer Status ===", level: .info)
+            logger.log("Available: \(recognizer.isAvailable)", level: .info)
+            logger.log("Locale: \(recognizer.locale)", level: .info)
+            logger.log("Supports on-device recognition: \(recognizer.supportsOnDeviceRecognition)", level: .info)
 
             // Prefer on-device recognition for privacy
             if recognizer.supportsOnDeviceRecognition {
-                print("Using on-device recognition for privacy")
+                logger.log("Using on-device recognition for privacy", level: .info)
             }
         } else {
-            print("ERROR: Failed to create speech recognizer")
+            logger.log("ERROR: Failed to create speech recognizer", level: .error)
         }
+
+        logger.logMethodExit("setupSpeechRecognizer")
     }
 
     // MARK: - Public Methods
@@ -100,32 +114,48 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
 
     /// Start speech recognition
     func startRecognition() throws {
-        print("Starting speech recognition...")
+        logger.markEvent("START_RECOGNITION_ATTEMPT")
+        logger.logMethodEntry("startRecognition")
+        logger.log("Thread: \(Thread.isMainThread ? "Main" : "Background-\(Thread.current)")", level: .debug)
+
+        recognitionStartTime = Date()
 
         // Check if recognizer is available
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
             let error = RecognitionError.recognizerNotAvailable
+            logger.logError(error, context: "Recognizer not available")
             currentError = error
             throw error
         }
+
+        logger.log("Recognizer available, memory address: \(Unmanaged.passUnretained(recognizer).toOpaque())", level: .debug)
 
         // Check audio engine
         guard let audioEngine = audioEngine else {
             let error = RecognitionError.audioEngineNotSet
+            logger.logError(error, context: "Audio engine not set")
             currentError = error
             throw error
         }
 
+        logger.log("Audio engine available, running: \(audioEngine.isRunning)", level: .debug)
+
         // Cancel any existing task
+        if recognitionTask != nil {
+            logger.log("Existing recognition task found, stopping it first", level: .warning)
+        }
         stopRecognition()
 
         // Create recognition request
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else {
             let error = RecognitionError.failedToCreateRequest
+            logger.logError(error, context: "Failed to create recognition request")
             currentError = error
             throw error
         }
+
+        logger.logLifecycle(recognitionRequest, event: .initialized, additionalInfo: "Recognition request created")
 
         // Configure request
         recognitionRequest.shouldReportPartialResults = true
@@ -134,30 +164,54 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         // Enable automatic punctuation
         if #available(macOS 13.0, *) {
             recognitionRequest.addsPunctuation = true
-            print("Automatic punctuation enabled")
+            logger.log("Automatic punctuation enabled", level: .debug)
         }
 
         // Get input node
         let inputNode = audioEngine.inputNode
+        logger.log("Input node bus count: \(inputNode.numberOfInputs)", level: .debug)
 
-        // Remove any existing tap
-        inputNode.removeTap(onBus: 0)
+        // Remove any existing tap - with error handling
+        logger.log("Attempting to remove existing tap on bus 0", level: .debug)
+        do {
+            inputNode.removeTap(onBus: 0)
+            logger.log("Successfully removed tap (or no tap existed)", level: .debug)
+        } catch {
+            logger.logError(error, context: "Failed to remove tap - this might be normal if no tap exists")
+        }
 
         // Get recording format
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+        logger.log("Recording format: \(recordingFormat)", level: .debug)
 
         // Install tap with buffer size 1024
+        logger.log("Installing tap on bus 0 with buffer size 1024", level: .debug)
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             self?.recognitionRequest?.append(buffer)
         }
+        logger.log("Tap installed successfully", level: .debug)
 
         // Start audio engine
+        logger.log("Preparing audio engine", level: .debug)
         audioEngine.prepare()
+
+        logger.log("Starting audio engine", level: .debug)
         try audioEngine.start()
+        logger.log("Audio engine started, running: \(audioEngine.isRunning)", level: .info)
 
         // Create recognition task
+        logger.log("Creating recognition task", level: .debug)
+        let taskCreationTime = Date()
+
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
+            guard let self = self else {
+                DebugLogger.shared.log("Completion handler called but self is nil", level: .warning)
+                return
+            }
+
+            let handlerTime = Date()
+            let timeSinceStart = self.recognitionStartTime.map { handlerTime.timeIntervalSince($0) } ?? 0
+            self.logger.log("Completion handler called, time since start: \(timeSinceStart)s, thread: \(Thread.isMainThread ? "Main" : "Background")", level: .debug)
 
             var isFinal = false
 
@@ -166,53 +220,120 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
                 self.transcriptionText = result.bestTranscription.formattedString
                 isFinal = result.isFinal
 
-                print("Transcribed: \(self.transcriptionText)")
+                let now = Date()
+                if let lastTime = self.lastPartialResultTime {
+                    self.logger.log("Time between results: \(now.timeIntervalSince(lastTime) * 1000)ms", level: .trace)
+                }
+                self.lastPartialResultTime = now
+
+                self.logger.log("Transcribed (\(isFinal ? "FINAL" : "partial")): \(self.transcriptionText)", level: .info)
 
                 if isFinal {
-                    print("Recognition final result received")
+                    self.logger.markEvent("RECOGNITION_FINAL_RESULT")
+                    if let startTime = self.recognitionStartTime {
+                        self.logger.logTiming("Total recognition", start: startTime)
+                    }
                 }
             }
 
             if let error = error {
-                print("Recognition error: \(error.localizedDescription)")
+                self.logger.logError(error, context: "Recognition task error")
                 self.currentError = error
 
                 // Check for 1-minute timeout
-                if (error as NSError).code == 203 {
-                    print("Recognition timeout (1-minute limit reached)")
+                let nsError = error as NSError
+                self.logger.log("Error domain: \(nsError.domain), code: \(nsError.code)", level: .error)
+
+                if nsError.code == 203 {
+                    self.logger.markEvent("RECOGNITION_TIMEOUT_1_MINUTE")
                     // Could implement restart logic here
                 }
             }
 
             if error != nil || isFinal {
+                self.logger.log("Stopping recognition due to: \(error != nil ? "error" : "final result")", level: .info)
                 self.stopRecognition()
             }
         }
 
+        if let task = recognitionTask {
+            logger.logLifecycle(task, event: .initialized, additionalInfo: "Recognition task created")
+            logger.log("Task state after creation: \(task.state.rawValue)", level: .debug)
+        }
+
+        logger.logTiming("Task creation", start: taskCreationTime)
+
         isRecognizing = true
-        print("Recognition started successfully")
+        logger.markEvent("RECOGNITION_STARTED_SUCCESSFULLY")
+        logger.logMethodExit("startRecognition", result: "success")
     }
 
     /// Stop speech recognition
     func stopRecognition() {
-        print("Stopping speech recognition...")
+        logger.markEvent("STOP_RECOGNITION_CALLED")
+        logger.logMethodEntry("stopRecognition")
+        logger.log("Thread: \(Thread.isMainThread ? "Main" : "Background-\(Thread.current)")", level: .debug)
 
-        // Stop the recognition task
-        recognitionTask?.cancel()
-        recognitionTask = nil
+        let stopStartTime = Date()
 
-        // Stop the recognition request
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
+        // Log current state
+        logger.log("Current state - task: \(recognitionTask != nil), request: \(recognitionRequest != nil), engine running: \(audioEngine?.isRunning ?? false)", level: .debug)
+
+        // Wrap cleanup in autoreleasepool to force immediate release
+        autoreleasepool {
+            // Stop the recognition task
+            if let task = recognitionTask {
+                logger.log("Cancelling recognition task, current state: \(task.state.rawValue)", level: .debug)
+                logger.logLifecycle(task, event: .released, additionalInfo: "About to cancel")
+                task.cancel()
+                logger.log("Recognition task cancelled", level: .debug)
+                recognitionTask = nil
+            } else {
+                logger.log("No recognition task to cancel", level: .debug)
+            }
+
+            // Stop the recognition request
+            if let request = recognitionRequest {
+                logger.log("Ending audio on recognition request", level: .debug)
+                logger.logLifecycle(request, event: .released, additionalInfo: "About to end audio")
+                request.endAudio()
+                logger.log("Recognition request audio ended", level: .debug)
+                recognitionRequest = nil
+            } else {
+                logger.log("No recognition request to end", level: .debug)
+            }
+        }
 
         // Stop audio engine
         if let audioEngine = audioEngine {
-            audioEngine.stop()
-            audioEngine.inputNode.removeTap(onBus: 0)
+            logger.log("Stopping audio engine, currently running: \(audioEngine.isRunning)", level: .debug)
+
+            if audioEngine.isRunning {
+                audioEngine.stop()
+                logger.log("Audio engine stopped", level: .debug)
+            }
+
+            // Remove tap with error handling
+            logger.log("Removing tap from input node", level: .debug)
+            do {
+                audioEngine.inputNode.removeTap(onBus: 0)
+                logger.log("Tap removed successfully", level: .debug)
+            } catch {
+                logger.logError(error, context: "Error removing tap - this may be expected if no tap exists")
+            }
+        } else {
+            logger.log("No audio engine to stop", level: .debug)
         }
 
         isRecognizing = false
-        print("Recognition stopped")
+
+        // Clear timing variables
+        recognitionStartTime = nil
+        lastPartialResultTime = nil
+
+        logger.logTiming("Stop recognition", start: stopStartTime)
+        logger.markEvent("RECOGNITION_STOPPED")
+        logger.logMethodExit("stopRecognition")
     }
 
     /// Test recognition for specified duration
@@ -237,7 +358,10 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     // MARK: - Cleanup
 
     deinit {
+        logger.markEvent("SPEECH_RECOGNITION_MANAGER_DEINIT")
+        logger.logLifecycle(self, event: .deinitialized, additionalInfo: "SpeechRecognitionManager being deallocated")
         stopRecognition()
+        logger.log("SpeechRecognitionManager cleanup complete", level: .info)
     }
 }
 
