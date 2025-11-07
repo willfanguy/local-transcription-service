@@ -13,8 +13,8 @@ class AudioEngineManager: ObservableObject {
 
     // MARK: - Properties
 
-    /// The audio engine instance
-    private let audioEngine = AVAudioEngine()
+    /// The audio engine instance - created fresh for each recording session
+    private var audioEngine: AVAudioEngine?
 
     // MARK: - Published Properties
 
@@ -27,72 +27,109 @@ class AudioEngineManager: ObservableObject {
     // MARK: - Computed Properties
 
     /// Get the current audio engine (for use by SpeechRecognitionManager)
-    var engine: AVAudioEngine {
+    var engine: AVAudioEngine? {
         return audioEngine
     }
 
     /// Check if engine is currently running
     var engineIsRunning: Bool {
-        return audioEngine.isRunning
+        return audioEngine?.isRunning ?? false
     }
 
     // MARK: - Initialization
 
     init() {
         print("AudioEngineManager initialized")
-        printEngineConfiguration()
+        print("Fresh audio engine will be created for each recording session")
     }
 
     // MARK: - Public Methods
 
-    /// Start the audio engine
+    /// Get a fresh audio engine instance for a new recording session
+    func getFreshEngine() -> AVAudioEngine {
+        // Stop and destroy any existing engine first
+        if let existingEngine = audioEngine, existingEngine.isRunning {
+            print("Stopping existing engine before creating fresh one")
+            existingEngine.stop()
+        }
+
+        // Create fresh engine
+        print("Creating fresh AVAudioEngine instance")
+        let freshEngine = AVAudioEngine()
+        audioEngine = freshEngine
+
+        return freshEngine
+    }
+
+    /// Start the audio engine - creates a fresh engine for each session
     func startEngine() throws {
         print("Starting audio engine...")
 
-        if audioEngine.isRunning {
+        // Check if there's already a running engine
+        if let engine = audioEngine, engine.isRunning {
             print("Audio engine already running")
             return
         }
 
         do {
+            // CRITICAL: Create a FRESH engine for each recording session
+            // This prevents autorelease pool corruption from reusing the same engine
+            print("Creating fresh AVAudioEngine instance...")
+            audioEngine = AVAudioEngine()
+
+            guard let engine = audioEngine else {
+                throw AudioEngineError.inputNodeUnavailable
+            }
+
             // Prepare the engine
-            audioEngine.prepare()
+            engine.prepare()
 
             // Start the engine
-            try audioEngine.start()
+            try engine.start()
 
             isRunning = true
-            print("Audio engine started successfully")
+            print("Audio engine started successfully (fresh instance)")
             printEngineConfiguration()
 
         } catch {
             print("Failed to start audio engine: \(error.localizedDescription)")
             currentError = error
             isRunning = false
+            audioEngine = nil // Clean up on failure
             throw error
         }
     }
 
-    /// Stop the audio engine
+    /// Stop the audio engine and destroy the instance
     func stopEngine() {
         print("Stopping audio engine...")
 
-        if !audioEngine.isRunning {
-            print("Audio engine already stopped")
+        guard let engine = audioEngine else {
+            print("No audio engine to stop")
             return
         }
 
-        audioEngine.stop()
+        if !engine.isRunning {
+            print("Audio engine already stopped")
+            audioEngine = nil // Clean up even if already stopped
+            isRunning = false
+            return
+        }
+
+        engine.stop()
         isRunning = false
-        print("Audio engine stopped")
+
+        // CRITICAL: Nil out the engine to release all resources
+        // Next recording will get a completely fresh engine
+        audioEngine = nil
+        print("Audio engine stopped and destroyed")
     }
 
-    /// Reset the audio engine
+    /// Reset the audio engine (equivalent to stop with fresh engine approach)
     func resetEngine() {
         print("Resetting audio engine...")
         stopEngine()
-        audioEngine.reset()
-        print("Audio engine reset completed")
+        print("Audio engine reset completed (instance destroyed)")
     }
 
     /// Setup audio tap for recording (called by SpeechRecognitionManager)
@@ -100,7 +137,12 @@ class AudioEngineManager: ObservableObject {
                       format: AVAudioFormat? = nil,
                       tapBlock: @escaping AVAudioNodeTapBlock) {
 
-        let inputNode = audioEngine.inputNode
+        guard let engine = audioEngine else {
+            print("ERROR: Cannot setup tap - no audio engine")
+            return
+        }
+
+        let inputNode = engine.inputNode
         let recordingFormat = format ?? inputNode.outputFormat(forBus: 0)
 
         // Remove any existing tap
@@ -118,7 +160,11 @@ class AudioEngineManager: ObservableObject {
 
     /// Remove audio tap
     func removeAudioTap() {
-        audioEngine.inputNode.removeTap(onBus: 0)
+        guard let engine = audioEngine else {
+            print("No audio engine - tap already removed")
+            return
+        }
+        engine.inputNode.removeTap(onBus: 0)
         print("Audio tap removed")
     }
 
@@ -126,11 +172,18 @@ class AudioEngineManager: ObservableObject {
 
     /// Print current engine configuration for debugging
     private func printEngineConfiguration() {
-        let inputNode = audioEngine.inputNode
+        guard let engine = audioEngine else {
+            print("=== Audio Engine Configuration ===")
+            print("No engine instance")
+            print("================================")
+            return
+        }
+
+        let inputNode = engine.inputNode
         let outputFormat = inputNode.outputFormat(forBus: 0)
 
         print("=== Audio Engine Configuration ===")
-        print("Running: \(audioEngine.isRunning)")
+        print("Running: \(engine.isRunning)")
         print("Input channels: \(outputFormat.channelCount)")
         print("Sample rate: \(outputFormat.sampleRate)")
         print("Format: \(outputFormat.formatDescription)")
@@ -165,6 +218,7 @@ class AudioEngineManager: ObservableObject {
 
     deinit {
         stopEngine()
+        audioEngine = nil
         print("AudioEngineManager deinitialized")
     }
 }

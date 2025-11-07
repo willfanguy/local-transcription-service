@@ -106,8 +106,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupManagers() {
-        // Connect audio engine to speech manager
-        speechManager.setAudioEngine(audioManager.engine)
+        // Audio engine will be created fresh for each recording session
+        // No need to set it here - it will be set in startRecording()
 
         // Configure speech recognizer with user's language preference
         speechManager.setLanguage(settings.recognitionLanguage)
@@ -216,6 +216,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear previous transcription
         speechManager.transcriptionText = ""
 
+        // Get a fresh audio engine for this recording session
+        let freshEngine = audioManager.getFreshEngine()
+        speechManager.setAudioEngine(freshEngine)
+        print("[AppDelegate] Fresh audio engine created and set")
+
         // Start recognition (must be on main thread for AVAudioEngine)
         do {
             try speechManager.startRecognition()
@@ -274,6 +279,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Stop recognition
         speechManager.stopRecognition()
+
+        // DON'T destroy the engine immediately - the recognitionTask completion handler
+        // may still be running asynchronously with autoreleased references to engine internals.
+        // The old engine will be replaced when we create a fresh one for the next recording.
+        print("[AppDelegate] Audio engine stopped (will be replaced on next recording)")
 
         // Get transcribed text
         let transcribedText = speechManager.transcriptionText
