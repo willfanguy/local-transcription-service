@@ -84,7 +84,7 @@ The crash is NOT from lingering autoreleased objects from the first recording. T
 
 The problem is we destroy all references to the old engine BEFORE releasing `previousTask`, so the task's cleanup code creates autoreleased objects pointing to a deallocating engine.
 
-**Attempted Fixes** (14 attempts, all failed):
+**Attempted Fixes** (16 attempts, all failed):
 1. ✗ Removed `testRecognition()`, switched to `startRecognition()` - still crashed
 2. ✗ Added `audioEngine.reset()` after stopping - still crashed
 3. ✗ Moved `audioEngine.reset()` to before starting - still crashed
@@ -99,7 +99,9 @@ The problem is we destroy all references to the old engine BEFORE releasing `pre
 12. ✗ **Keep task alive longer** - Move cancelled task to `previousTask`, keep alive until next recording - still crashed
 13. ✗ **Don't stop audio engine** - Leave engine running in stopRecognition(), only stop on replacement - still crashed
 14. ✗ **Don't stop old engine in getFreshEngine()** - Just replace reference, let ARC clean up - still crashed
-15. 🧪 **IN TESTING: Engine History** - Keep old engines alive in array for 2 recording cycles
+15. ✗ **Engine History** - Keep old engines alive in array for 2 recording cycles - still crashed
+16. ✗ **Keep request alive too** - Added `previousRequest` to keep recognitionRequest alive along with task - still crashed
+17. 🧪 **IN TESTING: Don't remove tap** - Don't call `removeTap()` in cleanup, leave old engine's tap installed
 
 **What We Learned**:
 - Reusing AVAudioEngine vs creating fresh instances makes no difference
@@ -108,18 +110,24 @@ The problem is we destroy all references to the old engine BEFORE releasing `pre
 - Accessing `result.bestTranscription.formattedString` in different ways makes no difference
 - Stopping the engine timing makes no difference
 - **CRITICAL**: Waiting 5-10 seconds between recordings does NOT prevent crash
+- **CRITICAL**: Crash happens even with NO recording - just press and immediately release button, second press crashes
 - **CRITICAL**: Malloc debugging shows zombie object (___forwarding___ trying to message deallocated object)
-- **ROOT CAUSE**: When we release `previousTask`, its `deinit` creates autoreleased objects that reference the old engine, but we've already lost all strong references to that engine
+- **ROOT CAUSE**: When we release `previousTask`, its `deinit` creates autoreleased objects that reference OTHER objects (engine, request, tap)
+- Keeping engine alive (engineHistory) helps but not sufficient
+- Keeping request alive (`previousRequest`) helps but not sufficient
+- **Hypothesis**: The `removeTap()` call creates autoreleased cleanup objects that reference the engine's input node
 
-**Current Code State** (2025-11-07 attempt 15):
-- AudioEngineManager has `engineHistory: [AVAudioEngine]` array
+**Current Code State** (2025-11-07 attempt 17):
+- AudioEngineManager has `engineHistory: [AVAudioEngine]` array - keeps old engines alive for 2 recording cycles
+- SpeechRecognitionManager:
+  - Keeps `previousTask` AND `previousRequest` alive until next recording starts
+  - Doesn't stop engine in cleanup (left running until replaced)
+  - **NEW**: Doesn't call `removeTap()` in cleanup - tap left installed (harmless, checks for nil request)
 - `getFreshEngine()` moves old engine to history BEFORE creating new one
-- Old engines kept alive for 2 recording cycles, then removed
-- This ensures old engine is still alive when `previousTask` deallocates and creates autoreleased cleanup objects
-- SpeechRecognitionManager: doesn't stop engine in cleanup, moves cancelled task to `previousTask`
+- All three objects (task, request, engine) kept alive to prevent zombie references
 
-**Theory on Latest Fix (attempt 15)**:
-The zombie is created when `previousTask = nil` causes the task's `deinit` to run. That `deinit` accesses the old engine's internals, creating autoreleased wrapper objects. If the old engine has no strong references, those wrappers become zombies. By keeping the old engine in `engineHistory`, it stays alive until all cleanup completes.
+**Theory on Latest Fix (attempt 17)**:
+The `removeTap()` call creates autoreleased cleanup objects when removing the tap from the engine's input node. These objects reference the engine/node internals. Even though we keep the engine alive, removing the tap might create problematic autoreleased references. By NOT removing the tap, we avoid this cleanup. The tap is harmless - its closure checks if `recognitionRequest` exists and returns early if nil.
 
 **Flow**:
 1. First recording: `engine1` created

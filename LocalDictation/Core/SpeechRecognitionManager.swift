@@ -26,6 +26,9 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     /// Keep old task alive to prevent autoreleased cleanup objects from corrupting
     private var previousTask: SFSpeechRecognitionTask?
 
+    /// Keep old request alive - the cancelled task has autoreleased objects referencing it
+    private var previousRequest: SFSpeechAudioBufferRecognitionRequest?
+
     /// The audio engine (will be provided by AudioEngineManager)
     private var audioEngine: AVAudioEngine?
 
@@ -146,11 +149,13 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
     }
 
     private func performStartRecognition(audioEngine: AVAudioEngine, recognizer: SFSpeechRecognizer) throws {
-        // Release the previous recording's task (if any)
-        // By now, any autoreleased objects from its cancellation should have drained
-        if previousTask != nil {
-            print("Releasing previous recording's task")
+        // CRITICAL: Release previous task AND request together
+        // The cancelled task has autoreleased objects that reference the request
+        // By now, any autoreleased objects from cancellation should have drained
+        if previousTask != nil || previousRequest != nil {
+            print("Releasing previous recording's task and request")
             previousTask = nil
+            previousRequest = nil
         }
 
         // Ensure any old objects are cleaned up before creating new ones
@@ -198,7 +203,8 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         let recordingFormat = inputNode.outputFormat(forBus: 0)
         print("Recording format: \(recordingFormat)")
 
-        // Note: No need to remove tap here - reset() in stopRecognition() already cleared it
+        // Note: We don't remove the old tap - we're using a fresh engine for each recording
+        // The old engine (with its tap) is kept alive in engineHistory
 
         // Install tap with buffer size 1024
         // Use weak reference to prevent retain cycles and safely handle cleanup
@@ -299,28 +305,33 @@ class SpeechRecognitionManager: NSObject, ObservableObject {
         // 1. Stop recognition request FIRST (before stopping engine)
         if let request = recognitionRequest {
             request.endAudio()
-            recognitionRequest = nil
             print("Recognition request ended")
         }
 
-        // 2. Cancel recognition task and move to previousTask to keep alive
-        // Cancellation creates autoreleased objects - keep task alive to prevent corruption
+        // 2. Cancel recognition task and move to previousTask/previousRequest to keep alive
+        // CRITICAL: Keep BOTH task and request alive
+        // The cancelled task has autoreleased objects that reference the request
+        // If we nil the request, those objects become zombies
         if let task = recognitionTask {
             task.cancel()
-            previousTask = task  // Keep alive until next recording
+            previousTask = task  // Keep task alive until next recording
+            previousRequest = recognitionRequest  // Keep request alive too!
             recognitionTask = nil
-            print("Recognition task cancelled and moved to previousTask")
+            recognitionRequest = nil
+            print("Recognition task cancelled and moved to previousTask (request kept alive too)")
+        } else if recognitionRequest != nil {
+            // No task but have request - just clear it
+            recognitionRequest = nil
+            print("Recognition request cleared (no task)")
         }
 
         // 3. DON'T stop the audio engine - let it keep running until replaced
         // Stopping it might cause the cancelled task's cleanup to reference deallocated memory
         print("Audio engine left running (will be replaced by fresh engine on next recording)")
 
-        // 4. Remove tap
-        if let audioEngine = audioEngine, audioEngine.inputNode.numberOfInputs > 0 {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            print("Audio tap removed")
-        }
+        // 4. DON'T remove the tap - removing it might create autoreleased cleanup objects
+        // The tap is harmless - its closure checks if recognitionRequest exists and returns early if nil
+        print("Audio tap left installed (harmless - checks for nil request)")
 
         // 5. Update state
         isRecognizing = false
