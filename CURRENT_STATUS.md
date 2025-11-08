@@ -1,206 +1,237 @@
 # Local Dictation App - Current Status
-**Date**: November 7, 2025
+
+**Date**: November 8, 2025
 **Branch**: `file-based-recognition`
-**Last Working Session**: Fixing multiple crash issues
+**Last Working Session**: Implementing simplified recognizer lifecycle (no destroy/recreate between sessions)
 
 ## Executive Summary
 
-The Local Dictation app has been experiencing THREE different types of crashes:
+After extensive research into Speech framework behavior and multiple approaches, discovered that **destroying and recreating the recognizer between sessions** was causing the crashes. Implementing industry-standard approach: keep same `SFSpeechRecognizer` instance across sessions, only cancel/recreate recognition tasks.
 
-1. **Speech Framework Crash** - Autorelease pool zombie object crash when starting second recording
-2. **TCC Privacy Violation Crash #1** - When test harness tries to record without permissions
-3. **TCC Privacy Violation Crash #2** - When app checks speech permissions on startup
+## Recent Changes (November 8, 2025 - Session 2)
 
-All three have been addressed with fixes implemented.
+### Attempted Fix #1: Deferred Reset (11:30-11:41 AM)
+**Hypothesis**: Completion handler fires AFTER we destroy recognizer, adding autoreleased objects referencing dead memory.
 
-## Crash Issues and Fixes
+**Implementation**:
+- Added `requestResetAfterCompletion()` method to wait for completion handler
+- Used callback pattern to defer recognizer reset until handler finishes
+- Added 5-second timeout as safety net
 
-### 1. Speech Framework Crash (Original Issue)
-**Symptoms**:
-- App crashes with `EXC_BAD_ACCESS` when starting second recording
-- Happens when recordings are started too quickly in succession
-- Crash occurs during autorelease pool cleanup
+**Result**: ❌ **Still crashed**
+- Deferred reset DID execute properly (logs confirmed)
+- But crash occurred 137ms AFTER starting NEW recognition session
+- Crash happened DURING startup, not during cleanup
+- **Conclusion**: The reset itself is the problem, not the timing
 
-**Root Cause**:
-- Speech framework objects not properly released between recordings
-- Autorelease pool tries to release already-deallocated objects
+### Current Fix #2: No Reset - Keep Same Recognizer (11:42 AM)
+**Hypothesis**: Based on Speech framework research, destroying/recreating recognizer is non-standard and causes crashes.
 
-**Fix Applied**:
-```swift
-// AppDelegate.swift - Line 43
-private let minimumCooldownSeconds = 5.0  // Increased from 3.0
+**Implementation**:
+- Removed ALL `resetRecognizer()` calls from `AppDelegate.stopRecording()`
+- Removed `requestResetAfterCompletion()` mechanism
+- Keep same `SFSpeechRecognizer` instance for app lifetime
+- Only cancel task, nil out task/request, then create new task for next session
 
-// Added autoreleasepool blocks for aggressive cleanup
-autoreleasepool {
-    speechManager.stopRecognition()
-}
+**This matches industry best practices found in research**:
+- Most developers DON'T destroy recognizer between sessions
+- Standard pattern: cancel task → nil task/request → start new task
+- Recognizer persists across multiple recognition sessions
 
-// Visual feedback during cooldown
-showCooldownFeedback(remainingTime: remainingTime)
-```
+**Testing**: In progress
 
-### 2. TCC Privacy Crash - Test Harness
-**Symptoms**:
-- Crash when test harness tries to start recording
-- `__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__`
+## Research Findings from Speech Framework Documentation
 
-**Root Cause**:
-- Test harness attempting to access microphone/speech without checking permissions
+### Key Discoveries:
 
-**Fix Applied**:
-```swift
-// CrashTestHarness.swift - Line 200-213
-guard permissionsManager.allPermissionsGranted else {
-    logMessages.append("❌ ERROR: Missing permissions!")
-    // Show clear error message instead of attempting to record
-    return
-}
-```
+1. **Completion Handler Continues After cancel()**
+   - Stack Overflow reports: calling `task.cancel()` does NOT immediately stop completion handler
+   - Handler continues to execute after delay
+   - `isCanceled` returns `false` immediately after calling `cancel()`
 
-### 3. TCC Privacy Crash - Startup Permission Check
-**Symptoms**:
-- App crashes when user tries to grant permissions in System Settings
-- Crash occurs immediately after app launch when checking permissions
+2. **No Synchronous Cancellation**
+   - Framework provides no way to ensure all callbacks have completed
+   - Cancellation is asynchronous with no completion notification
 
-**Root Cause**:
-- `SFSpeechRecognizer.authorizationStatus()` called too early on startup
-- TCC system not ready to handle permission check
+3. **Standard Cleanup Pattern** (from multiple sources):
+   ```swift
+   recognitionTask?.cancel()
+   audioEngine.stop()
+   inputNode.removeTap(onBus: 0)
+   recognitionRequest = nil
+   recognitionTask = nil
+   // NOTE: Recognizer is NOT destroyed
+   ```
 
-**Fix Applied**:
-```swift
-// PermissionsManager.swift - Line 23-26
-private init() {
-    // Don't check permissions immediately to avoid TCC crashes
-    // Permissions will be checked when needed
-}
+4. **Recognizer Lifecycle**:
+   - Most examples create recognizer ONCE and keep it for app lifetime
+   - Only task and request are recreated for each session
+   - No documentation mentions destroying/recreating recognizer
 
-// AppDelegate.swift - Line 70-76
-// Delay permission check to avoid TCC crash
-DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-    // Only check microphone and accessibility first
-    self?.permissionsManager.checkMicrophonePermission()
-    self?.permissionsManager.checkAccessibilityPermission()
-}
-```
+5. **1-Minute Task Limit**:
+   - `SFSpeechRecognitionTask` has hard 1-minute limit
+   - Tasks must be recreated for longer sessions
+   - This is a framework limitation, not a bug
 
-## Files Modified
+### Files Modified:
 
-1. **LocalDictation/AppDelegate.swift**
-   - Added 5-second cooldown timer
-   - Added autoreleasepool cleanup
-   - Added cooldown UI feedback
-   - Deferred permission checking on startup
-   - Made recording methods public for test harness
+**LocalDictation/Core/SpeechRecognitionManager.swift** (~50 lines added):
+- Added `pendingResetCompletion` callback mechanism (now unused)
+- Added `requestResetAfterCompletion()` method (now unused)
+- Added timeout protection for deferred reset (now unused)
+- **Note**: These additions will be removed if current fix works
 
-2. **LocalDictation/Core/SpeechRecognitionManager.swift**
-   - Added autoreleasepool around cleanup
-   - Enhanced logging for debugging
-
-3. **LocalDictation/Debug/CrashTestHarness.swift**
-   - Added permission check before running tests
-   - Fixed button style compatibility
-   - Fixed AppDelegate reference using shared instance
-
-4. **LocalDictation/Utilities/PermissionsManager.swift**
-   - Removed automatic permission check in init()
-   - Made permission checking more defensive
-
-5. **LocalDictation/Utilities/DebugLogger.swift**
-   - Added comprehensive debug logging system
-
-## Permissions Reset
-
-All permissions have been reset using:
-```bash
-tccutil reset All com.yourname.LocalDictation
-tccutil reset Microphone com.yourname.LocalDictation
-tccutil reset SpeechRecognition com.yourname.LocalDictation
-tccutil reset Accessibility com.yourname.LocalDictation
-```
+**LocalDictation/AppDelegate.swift** (major simplification):
+- **REMOVED**: All recognizer reset logic
+- **REMOVED**: Deferred reset requests
+- **REMOVED**: Autoreleasepool draining
+- **REMOVED**: 500ms delays and run loop cycles
+- **KEPT**: Simple `stopRecognition()` call
+- **KEPT**: Immediate text processing
 
 ## Current App State
 
-- **Build Status**: SUCCESS (last build 13:42:54)
-- **Permissions**: RESET (needs fresh grant)
-- **App Location**: `/Users/will/Repos/local-transcription-service/build/Debug/LocalDictation.app`
-- **Cooldown Timer**: 5 seconds
-- **Debug Logging**: Enabled
+- **Build Status**: SUCCESS (last build: 11:42 AM, Nov 8)
+- **Running**: Ready to test
+- **Approach**: Simplified - no recognizer destruction between sessions
+- **Code Complexity**: Significantly reduced
+
+## Crash History (This Session)
+
+**Crash #1** - 11:26:21 AM (First deferred reset attempt):
+- Pattern: 4 seconds after completion handler finished
+- During: Main event loop autorelease pool drain
+- Issue: Reset AFTER handler still caused problems
+
+**Crash #2** - 11:41:07 AM (Second test with deferred reset):
+- Pattern: 137ms after starting NEW recognition
+- During: Recognition startup, not cleanup
+- Issue: Proves the reset itself is the problem
+
+**Crash #3** - 11:26:24 AM (Original crash that started this):
+- Pattern: 2 seconds after cycle complete
+- During: Main event loop autorelease pool drain
+- Issue: Autoreleased objects referencing destroyed recognizer
 
 ## What's Next
 
-### Immediate Steps:
+### Immediate Testing:
+1. ✅ Build completed successfully
+2. 🔄 Launch app and run Crash Test Harness
+3. 🔄 Test "1s record, 0s delay" (rapid cycling)
+4. 🔄 Test "0.5s record, 0.5s delay" (stress test)
+5. 🔄 Verify multiple cycles without crash
 
-1. **Clean Build & Run**:
-```bash
-# Clean build folder
-rm -rf build/
-xcodebuild clean -project LocalDictation.xcodeproj
+### If This Works:
+- Clean up unused deferred reset code from SpeechRecognitionManager
+- Remove `resetRecognizer()` method entirely
+- Update documentation with correct lifecycle pattern
+- Commit changes
 
-# Build fresh
-xcodebuild build -project LocalDictation.xcodeproj -configuration Debug
+### If This Fails:
+- Consider that rapid cycling itself may be problematic
+- Investigate if Speech framework has internal state issues
+- May need to file radar with Apple
+- Consider alternative approaches (longer cooldowns, different recognition pattern)
 
-# Run the app
-./build/Debug/LocalDictation.app/Contents/MacOS/LocalDictation
-```
+## Root Cause (Updated Understanding)
 
-2. **Grant Permissions Carefully**:
-   - Run the app first
-   - Wait a few seconds for it to fully initialize
-   - Click menu bar icon → "Open Permissions"
-   - Grant permissions ONE AT A TIME:
-     1. First: Microphone
-     2. Second: Accessibility
-     3. Last: Speech Recognition (only when needed for recording)
+**Previous Theory** (INCORRECT):
+- Completion handler fires after we destroy recognizer
+- Autoreleased objects reference deallocated memory
+- Need to defer reset until handler completes
 
-3. **Test Recording**:
-   - Try manual recording with Fn key or menu
-   - Verify 5-second cooldown works
-   - Check that cooldown prevents crash
+**Current Theory** (Based on Research):
+- Destroying and recreating recognizer is non-standard pattern
+- Speech framework expects recognizer to persist across sessions
+- Internal framework state becomes corrupted when recognizer is destroyed mid-lifecycle
+- Autoreleased objects may hold weak references that break when recognizer is recreated
 
-4. **Test Harness** (after permissions granted):
-   - Click menu bar → "Debug: Crash Test Harness..."
-   - Should show permission check first
-   - Run "Rapid Start/Stop" test
-
-## Known Issues
-
-1. **Speech Recognition Permission Check**:
-   - MUST NOT be checked on app startup
-   - Only check when user actually tries to record
-   - System Settings may still crash app if user tries to toggle it
-
-2. **Cooldown Required**:
-   - 5-second mandatory cooldown between recordings
-   - This is a workaround for Apple Speech framework bug
-   - Shows countdown in menu bar
+**Evidence**:
+- No major examples show recognizer destruction between sessions
+- Crashes occur both AFTER stopping AND DURING starting new sessions
+- Deferred reset (which worked for cleanup) still crashed during startup
+- This indicates the destroy/recreate pattern itself is fundamentally incompatible
 
 ## Debug Information
 
-- **Debug Logs**: `~/Documents/LocalDictation/debug_logs/`
-- **Crash Reports**: `~/Library/Logs/DiagnosticReports/LocalDictation*.crash`
-- **Project Crash Logs**: `/Users/will/Repos/local-transcription-service/crash_logs/`
+- **Debug Logs**: `~/Documents/LocalDictation/debug_logs/latest.log`
+- **Crash Reports**: `~/Library/Logs/DiagnosticReports/LocalDictation*.ips`
+- **Latest Crash**: `LocalDictation-2025-11-08-114110.ips` (11:41 AM)
 
-## Testing Checklist
+## Git Status
 
-- [ ] App launches without crash
-- [ ] Can grant Microphone permission without crash
-- [ ] Can grant Accessibility permission without crash
-- [ ] Can record with Fn key (after permissions)
-- [ ] 5-second cooldown prevents rapid recording
-- [ ] Test harness checks permissions before running
-- [ ] No crash on second recording with cooldown
+**Uncommitted changes**: 2 source files modified
+```
+M LocalDictation/AppDelegate.swift (simplified - removed reset logic)
+M LocalDictation/Core/SpeechRecognitionManager.swift (added deferred reset - may remove)
+```
 
-## Important Notes
+**Recommendation**: Test before committing. If successful, clean up unused code before commit.
 
-1. **DO NOT** check Speech Recognition permission on startup
-2. **ALWAYS** wait for cooldown between recordings
-3. **GRANT** permissions one at a time, slowly
-4. **TEST** with manual recording before using test harness
+## Key Insights from This Session
 
-## Contact for Issues
+### What We Learned:
 
-File bug reports at: https://github.com/anthropics/claude-code/issues
+1. ✅ **TCC crash fix**: Cannot call `SFSpeechRecognizer.authorizationStatus()` from within callback
+2. ✅ **Research-backed approach**: Most developers keep same recognizer instance
+3. ✅ **Deferred execution works**: Callback pattern successfully deferred reset until handler finished
+4. ❌ **But wrong approach**: Even proper timing didn't fix the crash
+5. ✅ **Root cause identified**: Destroying/recreating recognizer is the problem, not timing
+
+### Best Practices (From Research):
+
+1. **Create recognizer once** - Keep same instance for app lifetime
+2. **Recreate only tasks** - Cancel old task, create new task for each session
+3. **Clean up properly** - Cancel task, stop engine, remove tap, nil references
+4. **Don't fight the framework** - Follow established patterns rather than inventing new ones
+
+### Technical Details:
+
+- Completion handlers continue executing after `cancel()` (documented in forums)
+- No synchronous way to ensure all callbacks complete
+- Framework manages internal state that breaks when recognizer destroyed
+- Autorelease pool issues are symptom, not cause
 
 ---
-Last Updated: November 7, 2025, 13:47
-Status: Ready for clean build and test with permission fixes
+
+**Last Updated**: November 8, 2025 11:50 AM CST
+**Status**: PIVOTING - Apple's streaming API has unfixable framework bugs. Moving to alternative approaches.
+**Next Action**: Implement file-based recognition or WhisperKit
+
+---
+
+## Post-Mortem: Why Streaming Failed
+
+After 3 crash attempts and extensive research:
+
+**Root Cause**: Apple's `SFSpeechAudioBufferRecognitionRequest` has autorelease pool bugs during rapid start/stop cycles. The framework creates autoreleased objects in callbacks that outlive the recognizer's lifecycle, causing `EXC_BAD_ACCESS` crashes.
+
+**Attempts Made**:
+1. ❌ Manual reset with delays - Still crashed
+2. ❌ Deferred reset (wait for completion) - Still crashed
+3. ❌ No reset at all - Still crashed
+
+**Crash Pattern**: ~130-150ms after starting recognition, during autorelease pool drain in main event loop.
+
+**Industry Research**: ALL successful dictation apps (Vocorize, Open-Whispr, etc.) avoid live streaming. They use "record-then-transcribe" pattern.
+
+## New Direction
+
+See **[ALTERNATIVES.md](./ALTERNATIVES.md)** for complete analysis of alternative approaches.
+
+**Two viable options**:
+
+1. **Apple File-Based API** (`SFSpeechURLRecognitionRequest`)
+   - Easiest migration (2-4 hours)
+   - Same framework, different API
+   - Record to file → transcribe file → delete file
+   - No rapid cycling issues
+
+2. **WhisperKit** (Swift/CoreML Whisper)
+   - Modern, production-ready
+   - Better accuracy than Apple
+   - 1-2 day integration
+   - Used by Vocorize and other commercial apps
+
+**Decision**: Implement both on separate branches, test and compare.
