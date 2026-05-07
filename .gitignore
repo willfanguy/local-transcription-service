@@ -8,3 +8,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 crash_logs/
+
+# Claude Code IDE settings
+.claude/
