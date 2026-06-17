@@ -6,3 +6,8 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+
+# Build output, runtime crash dumps, and IDE settings (artifacts, never committed)
+build/
+crash_logs/
+.claude/
